@@ -70,3 +70,25 @@ run_stats <- function(df, paired = FALSE) {
 
   do.call(rbind, Filter(Negate(is.null), results))
 }
+
+summarize_groups <- function(df) {
+  genes  <- unique(df$Gene)
+  groups <- unique(df$Group)
+
+  rows <- lapply(genes, function(gene) {
+    lapply(groups, function(grp) {
+      vals <- df$fold_change[df$Gene == gene & df$Group == grp]
+      if (length(vals) == 0) return(NULL)
+      data.frame(
+        Gene    = gene,
+        Group   = grp,
+        mean_fc = mean(vals, na.rm = TRUE),
+        sd_fc   = sd(vals, na.rm = TRUE),
+        sem_fc  = sd(vals, na.rm = TRUE) / sqrt(length(vals)),
+        stringsAsFactors = FALSE
+      )
+    })
+  })
+
+  do.call(rbind, Filter(Negate(is.null), unlist(rows, recursive = FALSE)))
+}

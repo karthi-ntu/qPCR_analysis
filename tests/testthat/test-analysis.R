@@ -89,3 +89,16 @@ test_that("run_stats returns ANOVA + Tukey for 3+ groups", {
   expect_true(nrow(result) >= 2)
   expect_true(all(c("Gene", "Comparison", "p_value", "Significant") %in% names(result)))
 })
+
+test_that("summarize_groups computes mean, sd, sem per group", {
+  df <- data.frame(
+    Group = c("Control", "Control", "Treatment", "Treatment"),
+    Gene = "ACTB",
+    fold_change = c(1.0, 1.0, 2.0, 2.0)
+  )
+  result <- summarize_groups(df)
+  expect_equal(nrow(result), 2)
+  expect_true(all(c("Group", "Gene", "mean_fc", "sd_fc", "sem_fc") %in% names(result)))
+  expect_equal(result$mean_fc[result$Group == "Control"], 1.0)
+  expect_equal(result$sd_fc[result$Group == "Control"], 0.0)
+})
