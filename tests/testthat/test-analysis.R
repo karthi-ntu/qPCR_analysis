@@ -70,7 +70,7 @@ test_that("run_stats returns paired t-test result for 2 groups paired=TRUE", {
     Sample = c("S1", "S2", "S3", "S1", "S2", "S3"),
     Group = c(rep("Control", 3), rep("Treatment", 3)),
     Gene = "ACTB",
-    delta_ct = c(2.0, 2.1, 1.9, 4.0, 4.1, 3.9)
+    delta_ct = c(2.0, 2.3, 1.8, 4.1, 4.0, 3.9)
   )
   result <- run_stats(df, paired = TRUE)
   expect_equal(nrow(result), 1)

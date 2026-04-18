@@ -46,14 +46,7 @@ run_stats <- function(df, paired = FALSE) {
         g2_vals <- sub2$delta_ct
       }
 
-      test <- tryCatch(
-        t.test(g1_vals, g2_vals, paired = paired),
-        error = function(e) {
-          # Handle degenerate case: perfectly constant differences yield zero
-          # variance; mean difference non-zero implies p ~ 0 (significant).
-          list(p.value = if (mean(g1_vals - g2_vals) != 0) 0 else 1)
-        }
-      )
+      test <- t.test(g1_vals, g2_vals, paired = paired)
       data.frame(
         Gene        = gene,
         Comparison  = paste(groups[1], "vs", groups[2]),
