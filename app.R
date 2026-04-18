@@ -103,16 +103,21 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$load_paste, {
-    txt <- trimws(input$paste_data)
-    req(nchar(txt) > 0)
+    txt <- input$paste_data
+    req(!is.null(txt), nchar(trimws(txt)) > 0)
+    # Handle \r\n (Windows/Excel), \r (old Mac), \n (Unix)
+    txt <- gsub("\r\n", "\n", txt)
+    txt <- gsub("\r",   "\n", txt)
     lines <- strsplit(txt, "\n")[[1]]
+    lines <- lines[nchar(trimws(lines)) > 0]
     rows <- lapply(lines, function(line) {
-      fields <- strsplit(trimws(line), "\t")[[1]]
+      fields <- strsplit(line, "\t")[[1]]
+      fields <- trimws(fields)
       if (length(fields) < 5) return(NULL)
       data.frame(
-        Sample       = trimws(fields[1]),
-        Group        = trimws(fields[2]),
-        Gene         = trimws(fields[3]),
+        Sample       = fields[1],
+        Group        = fields[2],
+        Gene         = fields[3],
         Ct_target    = suppressWarnings(as.numeric(fields[4])),
         Ct_reference = suppressWarnings(as.numeric(fields[5])),
         stringsAsFactors = FALSE
