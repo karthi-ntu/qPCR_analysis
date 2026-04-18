@@ -34,19 +34,24 @@ run_stats <- function(df, paired = FALSE) {
       g1_vals <- sub$delta_ct[sub$Group == groups[1]]
       g2_vals <- sub$delta_ct[sub$Group == groups[2]]
 
+      use_paired <- paired
       if (paired) {
         sub1 <- sub[sub$Group == groups[1], ]
         sub2 <- sub[sub$Group == groups[2], ]
         common_samples <- intersect(sub1$Sample, sub2$Sample)
-        sub1 <- sub1[sub1$Sample %in% common_samples, ]
-        sub2 <- sub2[sub2$Sample %in% common_samples, ]
-        sub1 <- sub1[order(sub1$Sample), ]
-        sub2 <- sub2[order(sub2$Sample), ]
-        g1_vals <- sub1$delta_ct
-        g2_vals <- sub2$delta_ct
+        if (length(common_samples) >= 2) {
+          sub1 <- sub1[sub1$Sample %in% common_samples, ]
+          sub2 <- sub2[sub2$Sample %in% common_samples, ]
+          sub1 <- sub1[order(sub1$Sample), ]
+          sub2 <- sub2[order(sub2$Sample), ]
+          g1_vals <- sub1$delta_ct
+          g2_vals <- sub2$delta_ct
+        } else {
+          use_paired <- FALSE
+        }
       }
 
-      test <- t.test(g1_vals, g2_vals, paired = paired)
+      test <- t.test(g1_vals, g2_vals, paired = use_paired)
       data.frame(
         Gene        = gene,
         Comparison  = paste(groups[1], "vs", groups[2]),
@@ -60,7 +65,7 @@ run_stats <- function(df, paired = FALSE) {
       comps   <- rownames(tukey)
       data.frame(
         Gene        = gene,
-        Comparison  = gsub("-", " vs ", comps),
+        Comparison  = sub("^(.+)-([^-]+)$", "\\1 vs \\2", comps),
         p_value     = round(tukey[, "p adj"], 4),
         Significant = ifelse(tukey[, "p adj"] < 0.05, "Yes", "No"),
         stringsAsFactors = FALSE

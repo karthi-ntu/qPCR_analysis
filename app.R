@@ -183,9 +183,9 @@ server <- function(input, output, session) {
       plots <- lapply(genes_in_data(), function(g)
         make_barplot(summary_result(), stats_result(),
                      gene = g, error_type = input$error_type))
-      png(file, width = 800, height = 500 * n, res = 150)
+      png(file, width = 1600, height = 1000 * n, res = 300)
+      on.exit(dev.off(), add = TRUE)
       for (p in plots) print(p)
-      dev.off()
     }
   )
 
@@ -198,8 +198,8 @@ server <- function(input, output, session) {
         make_barplot(summary_result(), stats_result(),
                      gene = g, error_type = input$error_type))
       pdf(file, width = 7, height = 5 * n)
+      on.exit(dev.off(), add = TRUE)
       for (p in plots) print(p)
-      dev.off()
     }
   )
 

@@ -18,7 +18,7 @@ make_barplot <- function(summary_df, stats_df, gene, error_type = "SD") {
       aes(ymin = mean_fc - error, ymax = mean_fc + error),
       width = 0.2, linewidth = 0.7
     ) +
-    scale_fill_manual(values = OKABE_ITO) +
+    scale_fill_manual(values = rep_len(OKABE_ITO, nrow(sub))) +
     labs(
       title = gene,
       y     = expression("Fold Change (2"^{-Delta*Delta*Ct}*")"),
