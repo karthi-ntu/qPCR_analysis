@@ -33,8 +33,8 @@ ui <- fluidPage(
       hr(),
       h5("Paste from Excel"),
       p(style = "font-size:12px; color:#888;",
-        "Copy cells from Excel in this column order:",
-        br(), strong("Sample | Group | Gene | Ct_target | Ct_reference")),
+        "Copy from Excel with headers in this order:",
+        br(), strong("Sample | Group | Reference gene | Gene1 | Gene2 | ...")),
       textAreaInput("paste_data", label = NULL,
                     placeholder = "Paste here (Ctrl+V), then click Load",
                     rows = 4, width = "100%"),
@@ -105,25 +105,39 @@ server <- function(input, output, session) {
   observeEvent(input$load_paste, {
     txt <- input$paste_data
     req(!is.null(txt), nchar(trimws(txt)) > 0)
-    # Handle \r\n (Windows/Excel), \r (old Mac), \n (Unix)
     txt <- gsub("\r\n", "\n", txt)
     txt <- gsub("\r",   "\n", txt)
     lines <- strsplit(txt, "\n")[[1]]
     lines <- lines[nchar(trimws(lines)) > 0]
-    rows <- lapply(lines, function(line) {
-      fields <- strsplit(line, "\t")[[1]]
-      fields <- trimws(fields)
-      if (length(fields) < 5) return(NULL)
-      data.frame(
-        Sample       = fields[1],
-        Group        = fields[2],
-        Gene         = fields[3],
-        Ct_target    = suppressWarnings(as.numeric(fields[4])),
-        Ct_reference = suppressWarnings(as.numeric(fields[5])),
-        stringsAsFactors = FALSE
-      )
+    req(length(lines) >= 2)
+
+    # Parse header row to get gene names
+    headers <- trimws(strsplit(lines[1], "\t")[[1]])
+    # Format: Sample | Group | Reference | Gene1 | Gene2 ...
+    req(length(headers) >= 4)
+    gene_names <- headers[4:length(headers)]
+
+    # Parse data rows and pivot to long format
+    rows <- lapply(lines[-1], function(line) {
+      fields <- trimws(strsplit(line, "\t")[[1]])
+      if (length(fields) < 4) return(NULL)
+      sample_id  <- fields[1]
+      group      <- fields[2]
+      ct_ref     <- suppressWarnings(as.numeric(fields[3]))
+      lapply(seq_along(gene_names), function(i) {
+        ct_target <- suppressWarnings(as.numeric(fields[3 + i]))
+        data.frame(
+          Sample       = sample_id,
+          Group        = group,
+          Gene         = gene_names[i],
+          Ct_target    = ct_target,
+          Ct_reference = ct_ref,
+          stringsAsFactors = FALSE
+        )
+      })
     })
-    parsed <- do.call(rbind, Filter(Negate(is.null), rows))
+    parsed <- do.call(rbind, Filter(Negate(is.null),
+                                    unlist(rows, recursive = FALSE)))
     if (!is.null(parsed) && nrow(parsed) > 0) {
       rv$data <- parsed
       updateTextAreaInput(session, "paste_data", value = "")
