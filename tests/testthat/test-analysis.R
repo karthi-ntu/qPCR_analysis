@@ -49,3 +49,43 @@ test_that("compute_delta_ct preserves all input columns", {
   result <- compute_delta_ct(df)
   expect_true(all(c("Sample", "Group", "Gene", "Ct_target", "Ct_reference", "delta_ct") %in% names(result)))
 })
+
+test_that("run_stats returns unpaired t-test for 2 groups", {
+  set.seed(42)
+  df <- data.frame(
+    Sample = paste0("S", 1:6),
+    Group = rep(c("Control", "Treatment"), each = 3),
+    Gene = "ACTB",
+    delta_ct = c(2.0, 2.1, 1.9, 4.0, 4.1, 3.9)
+  )
+  result <- run_stats(df, paired = FALSE)
+  expect_equal(nrow(result), 1)
+  expect_true("p_value" %in% names(result))
+  expect_true(result$p_value < 0.05)
+  expect_equal(result$Significant, "Yes")
+})
+
+test_that("run_stats returns paired t-test result for 2 groups paired=TRUE", {
+  df <- data.frame(
+    Sample = c("S1", "S2", "S3", "S1", "S2", "S3"),
+    Group = c(rep("Control", 3), rep("Treatment", 3)),
+    Gene = "ACTB",
+    delta_ct = c(2.0, 2.1, 1.9, 4.0, 4.1, 3.9)
+  )
+  result <- run_stats(df, paired = TRUE)
+  expect_equal(nrow(result), 1)
+  expect_true(result$p_value < 0.05)
+})
+
+test_that("run_stats returns ANOVA + Tukey for 3+ groups", {
+  set.seed(42)
+  df <- data.frame(
+    Sample = paste0("S", 1:9),
+    Group = rep(c("Control", "TreatA", "TreatB"), each = 3),
+    Gene = "ACTB",
+    delta_ct = c(2.0, 2.1, 1.9, 4.0, 4.1, 3.9, 6.0, 6.1, 5.9)
+  )
+  result <- run_stats(df, paired = FALSE)
+  expect_true(nrow(result) >= 2)
+  expect_true(all(c("Gene", "Comparison", "p_value", "Significant") %in% names(result)))
+})

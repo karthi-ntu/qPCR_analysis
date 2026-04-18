@@ -19,3 +19,61 @@ compute_fold_change <- function(df, control_group) {
   })
   do.call(rbind, result_list)
 }
+
+run_stats <- function(df, paired = FALSE) {
+  genes <- unique(df$Gene)
+
+  results <- lapply(genes, function(gene) {
+    sub <- df[df$Gene == gene, ]
+    groups <- unique(sub$Group)
+    n_groups <- length(groups)
+
+    if (n_groups < 2) return(NULL)
+
+    if (n_groups == 2) {
+      g1_vals <- sub$delta_ct[sub$Group == groups[1]]
+      g2_vals <- sub$delta_ct[sub$Group == groups[2]]
+
+      if (paired) {
+        sub1 <- sub[sub$Group == groups[1], ]
+        sub2 <- sub[sub$Group == groups[2], ]
+        common_samples <- intersect(sub1$Sample, sub2$Sample)
+        sub1 <- sub1[sub1$Sample %in% common_samples, ]
+        sub2 <- sub2[sub2$Sample %in% common_samples, ]
+        sub1 <- sub1[order(sub1$Sample), ]
+        sub2 <- sub2[order(sub2$Sample), ]
+        g1_vals <- sub1$delta_ct
+        g2_vals <- sub2$delta_ct
+      }
+
+      test <- tryCatch(
+        t.test(g1_vals, g2_vals, paired = paired),
+        error = function(e) {
+          # Handle degenerate case: perfectly constant differences yield zero
+          # variance; mean difference non-zero implies p ~ 0 (significant).
+          list(p.value = if (mean(g1_vals - g2_vals) != 0) 0 else 1)
+        }
+      )
+      data.frame(
+        Gene        = gene,
+        Comparison  = paste(groups[1], "vs", groups[2]),
+        p_value     = round(test$p.value, 4),
+        Significant = ifelse(test$p.value < 0.05, "Yes", "No"),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      aov_fit <- aov(delta_ct ~ Group, data = sub)
+      tukey   <- TukeyHSD(aov_fit)$Group
+      comps   <- rownames(tukey)
+      data.frame(
+        Gene        = gene,
+        Comparison  = gsub("-", " vs ", comps),
+        p_value     = round(tukey[, "p adj"], 4),
+        Significant = ifelse(tukey[, "p adj"] < 0.05, "Yes", "No"),
+        stringsAsFactors = FALSE
+      )
+    }
+  })
+
+  do.call(rbind, Filter(Negate(is.null), results))
+}
