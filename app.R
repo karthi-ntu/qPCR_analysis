@@ -26,6 +26,10 @@ ui <- fluidPage(
       radioButtons("error_type", "Error bars",
                    choices = c("SD", "SEM"), inline = TRUE),
       checkboxInput("paired", "Paired samples (2 groups only)", value = FALSE),
+      fluidRow(
+        column(6, numericInput("y_min", "Y-axis min", value = NA, step = 0.5)),
+        column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
+      ),
       hr(),
       h5("Data entry"),
       DTOutput("table"),
@@ -158,7 +162,9 @@ server <- function(input, output, session) {
         g <- gene
         output[[paste0("plot_", make.names(g))]] <- renderPlot({
           make_barplot(summary_result(), stats_result(),
-                       gene = g, error_type = input$error_type)
+                       gene = g, error_type = input$error_type,
+                       y_min = if (is.na(input$y_min)) NULL else input$y_min,
+                       y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
       })
     })
@@ -182,8 +188,10 @@ server <- function(input, output, session) {
       n <- length(genes_in_data())
       plots <- lapply(genes_in_data(), function(g)
         make_barplot(summary_result(), stats_result(),
-                     gene = g, error_type = input$error_type))
-      png(file, width = 1600, height = 1000 * n, res = 300)
+                     gene = g, error_type = input$error_type,
+                     y_min = if (is.na(input$y_min)) NULL else input$y_min,
+                     y_max = if (is.na(input$y_max)) NULL else input$y_max))
+      png(file, width = 3200, height = 2000 * n, res = 600)
       on.exit(dev.off(), add = TRUE)
       for (p in plots) print(p)
     }
@@ -196,7 +204,9 @@ server <- function(input, output, session) {
       n <- length(genes_in_data())
       plots <- lapply(genes_in_data(), function(g)
         make_barplot(summary_result(), stats_result(),
-                     gene = g, error_type = input$error_type))
+                     gene = g, error_type = input$error_type,
+                     y_min = if (is.na(input$y_min)) NULL else input$y_min,
+                     y_max = if (is.na(input$y_max)) NULL else input$y_max))
       pdf(file, width = 7, height = 5 * n)
       on.exit(dev.off(), add = TRUE)
       for (p in plots) print(p)

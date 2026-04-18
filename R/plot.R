@@ -6,7 +6,8 @@ OKABE_ITO <- c(
   "#0072B2", "#D55E00", "#CC79A7", "#000000"
 )
 
-make_barplot <- function(summary_df, stats_df, gene, error_type = "SD") {
+make_barplot <- function(summary_df, stats_df, gene, error_type = "SD",
+                         y_min = NULL, y_max = NULL) {
   sub <- summary_df[summary_df$Gene == gene, ]
   sub$error <- if (error_type == "SD") sub$sd_fc else sub$sem_fc
 
@@ -26,6 +27,10 @@ make_barplot <- function(summary_df, stats_df, gene, error_type = "SD") {
     ) +
     theme_classic(base_size = 14) +
     theme(legend.position = "none")
+
+  if (!is.null(y_min) || !is.null(y_max)) {
+    p <- p + coord_cartesian(ylim = c(y_min, y_max))
+  }
 
   sig <- stats_df[stats_df$Gene == gene & stats_df$Significant == "Yes", ]
 
