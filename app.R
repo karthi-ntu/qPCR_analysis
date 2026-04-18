@@ -6,15 +6,46 @@ library(ggsignif)
 source("R/analysis.R")
 source("R/plot.R")
 
-empty_table <- function() {
-  data.frame(
-    Sample       = character(0),
-    Group        = character(0),
-    Gene         = character(0),
-    Ct_target    = numeric(0),
-    Ct_reference = numeric(0),
-    stringsAsFactors = FALSE
-  )
+empty_wide <- function() {
+  data.frame(Sample = character(0), Group = character(0),
+             Ct_reference = numeric(0), stringsAsFactors = FALSE)
+}
+
+empty_long <- function() {
+  data.frame(Sample = character(0), Group = character(0),
+             Gene = character(0), Ct_target = numeric(0),
+             Ct_reference = numeric(0), stringsAsFactors = FALSE)
+}
+
+to_long_df <- function(wide) {
+  gene_cols <- setdiff(names(wide), c("Sample", "Group", "Ct_reference"))
+  if (length(gene_cols) == 0 || nrow(wide) == 0) return(empty_long())
+  rows <- lapply(seq_len(nrow(wide)), function(i) {
+    lapply(gene_cols, function(g) {
+      data.frame(
+        Sample       = wide$Sample[i],
+        Group        = wide$Group[i],
+        Gene         = g,
+        Ct_target    = suppressWarnings(as.numeric(wide[[g]][i])),
+        Ct_reference = suppressWarnings(as.numeric(wide$Ct_reference[i])),
+        stringsAsFactors = FALSE
+      )
+    })
+  })
+  do.call(rbind, Filter(Negate(is.null), unlist(rows, recursive = FALSE)))
+}
+
+to_wide_df <- function(long) {
+  genes <- unique(long$Gene[nchar(trimws(long$Gene)) > 0])
+  if (length(genes) == 0 || nrow(long) == 0) return(empty_wide())
+  unique_idx   <- !duplicated(paste(long$Sample, long$Group, sep = "\t"))
+  wide <- long[unique_idx, c("Sample", "Group", "Ct_reference")]
+  for (g in genes) {
+    gene_sub <- long[long$Gene == g, c("Sample", "Group", "Ct_target")]
+    names(gene_sub)[3] <- g
+    wide <- merge(wide, gene_sub, by = c("Sample", "Group"), all.x = TRUE, sort = FALSE)
+  }
+  wide
 }
 
 ui <- fluidPage(
@@ -22,7 +53,7 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       width = 4,
-      textInput("ctrl_group",  "Control group name",            value = "Control"),
+      textInput("ctrl_group", "Control group name", value = "Control"),
       radioButtons("error_type", "Error bars",
                    choices = c("SD", "SEM"), inline = TRUE),
       checkboxInput("paired", "Paired samples (2 groups only)", value = FALSE),
@@ -31,21 +62,28 @@ ui <- fluidPage(
         column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
       ),
       hr(),
-      h5("Paste from Excel"),
+      h5("Data"),
       p(style = "font-size:12px; color:#888;",
-        "Copy from Excel with headers in this order:",
-        br(), strong("Sample | Group | Reference gene | Gene1 | Gene2 | ...")),
-      textAreaInput("paste_data", label = NULL,
-                    placeholder = "Paste here (Ctrl+V), then click Load",
-                    rows = 4, width = "100%"),
-      actionButton("load_paste", "Load pasted data", icon = icon("upload"),
-                   style = "width:100%; margin-bottom:6px;"),
-      hr(),
-      h5("Or enter row by row"),
+        "Select data in Excel (include header row: ",
+        strong("Sample | Group | Reference gene | Gene1 | Gene2 | ..."),
+        "), press Ctrl+C, then press Ctrl+V anywhere on this page."),
+      tags$script(HTML("
+        document.addEventListener('paste', function(e) {
+          var tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+          if (tag === 'input' || tag === 'textarea') return;
+          var text = e.clipboardData.getData('text/plain');
+          if (text && text.trim().length > 0) {
+            Shiny.setInputValue('pasted_clipboard', text, {priority: 'event'});
+            e.preventDefault();
+          }
+        });
+      ")),
       DTOutput("table"),
       br(),
-      actionButton("add_row",   "Add row",    icon = icon("plus")),
-      actionButton("clear_tbl", "Clear table", icon = icon("trash")),
+      fluidRow(
+        column(6, actionButton("add_row",   "Add row",     icon = icon("plus"))),
+        column(6, actionButton("clear_tbl", "Clear table", icon = icon("trash")))
+      ),
       hr(),
       uiOutput("error_msg")
     ),
@@ -67,12 +105,14 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  rv <- reactiveValues(data = empty_table())
+  rv <- reactiveValues(wide = empty_wide())
 
-  # -- Editable data table ----------------------------------------------------
+  long_data <- reactive({ to_long_df(rv$wide) })
+
+  # -- Table ------------------------------------------------------------------
   output$table <- renderDT({
     datatable(
-      rv$data,
+      rv$wide,
       editable  = TRUE,
       rownames  = FALSE,
       selection = "none",
@@ -81,82 +121,68 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$table_cell_edit, {
-    info     <- input$table_cell_edit
-    rv$data  <- editData(rv$data, info, proxy = "table", rownames = FALSE)
-    rv$data$Ct_target    <- suppressWarnings(as.numeric(rv$data$Ct_target))
-    rv$data$Ct_reference <- suppressWarnings(as.numeric(rv$data$Ct_reference))
+    rv$wide <- editData(rv$wide, input$table_cell_edit, proxy = "table",
+                        rownames = FALSE)
+    num_cols <- setdiff(names(rv$wide), c("Sample", "Group"))
+    for (col in num_cols)
+      rv$wide[[col]] <- suppressWarnings(as.numeric(rv$wide[[col]]))
   })
 
+  # -- Add / clear rows -------------------------------------------------------
   observeEvent(input$add_row, {
-    rv$data <- rbind(rv$data, data.frame(
-      Sample       = "",
-      Group        = "",
-      Gene         = "",
-      Ct_target    = NA_real_,
-      Ct_reference = NA_real_,
-      stringsAsFactors = FALSE
-    ))
+    gene_cols <- setdiff(names(rv$wide), c("Sample", "Group", "Ct_reference"))
+    new_row <- data.frame(Sample = "", Group = "", Ct_reference = NA_real_,
+                          stringsAsFactors = FALSE)
+    for (g in gene_cols) new_row[[g]] <- NA_real_
+    rv$wide <- rbind(rv$wide, new_row)
   })
 
   observeEvent(input$clear_tbl, {
-    rv$data <- empty_table()
+    rv$wide <- empty_wide()
   })
 
-  observeEvent(input$load_paste, {
-    txt <- input$paste_data
+  # -- Paste loader (global Ctrl+V) ------------------------------------------
+  observeEvent(input$pasted_clipboard, {
+    txt <- input$pasted_clipboard
     req(!is.null(txt), nchar(trimws(txt)) > 0)
-    txt <- gsub("\r\n", "\n", txt)
-    txt <- gsub("\r",   "\n", txt)
+    txt   <- gsub("\r\n", "\n", txt)
+    txt   <- gsub("\r",   "\n", txt)
     lines <- strsplit(txt, "\n")[[1]]
     lines <- lines[nchar(trimws(lines)) > 0]
     req(length(lines) >= 2)
 
-    # Parse header row to get gene names
-    headers <- trimws(strsplit(lines[1], "\t")[[1]])
-    # Format: Sample | Group | Reference | Gene1 | Gene2 ...
+    headers    <- trimws(strsplit(lines[1], "\t")[[1]])
     req(length(headers) >= 4)
     gene_names <- headers[4:length(headers)]
 
-    # Parse data rows and pivot to long format
     rows <- lapply(lines[-1], function(line) {
       fields <- trimws(strsplit(line, "\t")[[1]])
       if (length(fields) < 4) return(NULL)
-      sample_id  <- fields[1]
-      group      <- fields[2]
-      ct_ref     <- suppressWarnings(as.numeric(fields[3]))
+      ct_ref <- suppressWarnings(as.numeric(fields[3]))
       lapply(seq_along(gene_names), function(i) {
-        ct_target <- suppressWarnings(as.numeric(fields[3 + i]))
-        data.frame(
-          Sample       = sample_id,
-          Group        = group,
-          Gene         = gene_names[i],
-          Ct_target    = ct_target,
-          Ct_reference = ct_ref,
-          stringsAsFactors = FALSE
-        )
+        data.frame(Sample = fields[1], Group = fields[2], Gene = gene_names[i],
+                   Ct_target    = suppressWarnings(as.numeric(fields[3 + i])),
+                   Ct_reference = ct_ref, stringsAsFactors = FALSE)
       })
     })
-    parsed <- do.call(rbind, Filter(Negate(is.null),
-                                    unlist(rows, recursive = FALSE)))
-    if (!is.null(parsed) && nrow(parsed) > 0) {
-      rv$data <- parsed
-      updateTextAreaInput(session, "paste_data", value = "")
-    }
+
+    parsed <- do.call(rbind, Filter(Negate(is.null), unlist(rows, recursive = FALSE)))
+    if (!is.null(parsed) && nrow(parsed) > 0)
+      rv$wide <- to_wide_df(parsed)
   })
 
   # -- Validation -------------------------------------------------------------
   validation_msg <- reactive({
-    df <- rv$data
-    if (nrow(df) == 0 || all(df$Gene == ""))
-      return("Enter at least one row of data.")
-    df <- df[df$Gene != "", ]
+    df <- long_data()
+    if (nrow(df) == 0)
+      return("Add at least one gene column and enter data.")
     if (any(is.na(df$Ct_target) | is.na(df$Ct_reference)))
-      return("All Ct_target and Ct_reference values must be numeric.")
+      return("All Ct values must be numeric.")
     if (!input$ctrl_group %in% df$Group)
       return(paste0("Control group '", input$ctrl_group, "' not found in Group column."))
     grp_counts <- table(df$Gene, df$Group)
     if (any(grp_counts[grp_counts > 0] < 2))
-      return("At least 2 samples per group per gene required for statistical testing.")
+      return("At least 2 samples per group per gene required.")
     NULL
   })
 
@@ -166,13 +192,11 @@ server <- function(input, output, session) {
       div(style = "color:red; margin-top:8px;", icon("exclamation-triangle"), " ", msg)
   })
 
-  # -- Core analysis ----------------------------------------------------------
+  # -- Analysis ---------------------------------------------------------------
   analyzed <- reactive({
     req(is.null(validation_msg()))
-    df <- rv$data[rv$data$Gene != "", ]
-    df <- compute_delta_ct(df)
-    df <- compute_fold_change(df, control_group = input$ctrl_group)
-    df
+    df <- compute_delta_ct(long_data())
+    compute_fold_change(df, control_group = input$ctrl_group)
   })
 
   stats_result <- reactive({
@@ -180,31 +204,16 @@ server <- function(input, output, session) {
     run_stats(analyzed(), paired = input$paired)
   })
 
-  summary_result <- reactive({
-    req(analyzed())
-    # Preserve control-first order for each gene
-    df <- analyzed()
-    gene_group_order <- unique(df[, c("Gene", "Group")])
-    sm <- summarize_groups(df)
-    sm$Group <- factor(sm$Group,
-                       levels = unique(gene_group_order$Group[
-                         gene_group_order$Group %in% sm$Group]))
-    sm$Group <- as.character(sm$Group)
-    sm
-  })
-
   genes_in_data <- reactive({
     req(analyzed())
     unique(analyzed()$Gene)
   })
 
-  # -- Per-gene plots (dynamic UI) --------------------------------------------
+  # -- Plots ------------------------------------------------------------------
   output$plots_ui <- renderUI({
     req(genes_in_data())
-    plot_output_list <- lapply(genes_in_data(), function(gene) {
-      plotOutput(paste0("plot_", make.names(gene)), height = "400px")
-    })
-    do.call(tagList, plot_output_list)
+    do.call(tagList, lapply(genes_in_data(), function(gene)
+      plotOutput(paste0("plot_", make.names(gene)), height = "400px")))
   })
 
   observe({
@@ -213,8 +222,8 @@ server <- function(input, output, session) {
       local({
         g <- gene
         output[[paste0("plot_", make.names(g))]] <- renderPlot({
-          make_barplot(summary_result(), stats_result(),
-                       gene = g, error_type = input$error_type,
+          make_barplot(analyzed(), stats_result(), gene = g,
+                       error_type = input$error_type,
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
@@ -222,13 +231,12 @@ server <- function(input, output, session) {
     })
   })
 
-  # -- Statistics table -------------------------------------------------------
+  # -- Stats table ------------------------------------------------------------
   output$stats_table <- renderDT({
     req(stats_result())
     datatable(stats_result(), rownames = FALSE,
               options = list(dom = "t")) |>
-      formatStyle("Significant",
-                  target          = "row",
+      formatStyle("Significant", target = "row",
                   backgroundColor = styleEqual("Yes", "#d4edda"))
   })
 
@@ -237,10 +245,10 @@ server <- function(input, output, session) {
     filename = function() paste0("qpcr_plot_", Sys.Date(), ".png"),
     content  = function(file) {
       req(genes_in_data())
-      n <- length(genes_in_data())
+      n     <- length(genes_in_data())
       plots <- lapply(genes_in_data(), function(g)
-        make_barplot(summary_result(), stats_result(),
-                     gene = g, error_type = input$error_type,
+        make_barplot(analyzed(), stats_result(), gene = g,
+                     error_type = input$error_type,
                      y_min = if (is.na(input$y_min)) NULL else input$y_min,
                      y_max = if (is.na(input$y_max)) NULL else input$y_max))
       png(file, width = 3200, height = 2000 * n, res = 600)
@@ -253,10 +261,10 @@ server <- function(input, output, session) {
     filename = function() paste0("qpcr_plot_", Sys.Date(), ".pdf"),
     content  = function(file) {
       req(genes_in_data())
-      n <- length(genes_in_data())
+      n     <- length(genes_in_data())
       plots <- lapply(genes_in_data(), function(g)
-        make_barplot(summary_result(), stats_result(),
-                     gene = g, error_type = input$error_type,
+        make_barplot(analyzed(), stats_result(), gene = g,
+                     error_type = input$error_type,
                      y_min = if (is.na(input$y_min)) NULL else input$y_min,
                      y_max = if (is.na(input$y_max)) NULL else input$y_max))
       pdf(file, width = 7, height = 5 * n)
@@ -272,7 +280,6 @@ server <- function(input, output, session) {
       write.csv(stats_result(), file, row.names = FALSE)
     }
   )
-
 }
 
 shinyApp(ui, server)

@@ -14,7 +14,8 @@ compute_fold_change <- function(df, control_group) {
     sub <- df[df$Gene == gene, ]
     control_mean <- mean(sub$delta_ct[sub$Group == control_group], na.rm = TRUE)
     sub$delta_delta_ct <- sub$delta_ct - control_mean
-    sub$fold_change <- 2^(-sub$delta_delta_ct)
+    sub$fold_change       <- 2^(-sub$delta_delta_ct)
+    sub$log2_fold_change  <- log2(sub$fold_change)
     sub
   })
   do.call(rbind, result_list)
