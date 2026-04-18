@@ -6,9 +6,16 @@ compute_delta_ct <- function(df) {
 }
 
 compute_fold_change <- function(df, control_group) {
-  control_dct <- df$delta_ct[df$Group == control_group]
-  control_mean <- mean(control_dct, na.rm = TRUE)
-  df$delta_delta_ct <- df$delta_ct - control_mean
-  df$fold_change <- 2^(-df$delta_delta_ct)
-  df
+  if (!control_group %in% df$Group) {
+    stop(sprintf("control_group '%s' not found in df$Group", control_group))
+  }
+  genes <- unique(df$Gene)
+  result_list <- lapply(genes, function(gene) {
+    sub <- df[df$Gene == gene, ]
+    control_mean <- mean(sub$delta_ct[sub$Group == control_group], na.rm = TRUE)
+    sub$delta_delta_ct <- sub$delta_ct - control_mean
+    sub$fold_change <- 2^(-sub$delta_delta_ct)
+    sub
+  })
+  do.call(rbind, result_list)
 }

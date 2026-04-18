@@ -24,3 +24,28 @@ test_that("compute_fold_change sets control group to 1.0", {
   expect_equal(result$fold_change[result$Group == "Control"], c(1.0, 1.0))
   expect_equal(result$fold_change[result$Group == "Treatment"], 2^(-2.0))
 })
+
+test_that("compute_fold_change applies per-gene control mean independently", {
+  df <- data.frame(
+    Sample   = c("S1", "S2", "S3", "S4"),
+    Group    = c("Control", "Treatment", "Control", "Treatment"),
+    Gene     = c("ACTB", "ACTB", "MYC", "MYC"),
+    delta_ct = c(2.0, 4.0, 5.0, 6.0)
+  )
+  result <- compute_fold_change(df, control_group = "Control")
+  # ACTB: control mean = 2.0, Treatment ΔΔCt = 2, FC = 2^(-2) = 0.25
+  expect_equal(result$fold_change[result$Gene == "ACTB" & result$Group == "Control"], 1.0)
+  expect_equal(result$fold_change[result$Gene == "ACTB" & result$Group == "Treatment"], 2^(-2.0))
+  # MYC: control mean = 5.0, Treatment ΔΔCt = 1, FC = 2^(-1) = 0.5
+  expect_equal(result$fold_change[result$Gene == "MYC" & result$Group == "Control"], 1.0)
+  expect_equal(result$fold_change[result$Gene == "MYC" & result$Group == "Treatment"], 2^(-1.0))
+})
+
+test_that("compute_delta_ct preserves all input columns", {
+  df <- data.frame(
+    Sample = "S1", Group = "Control", Gene = "ACTB",
+    Ct_target = 20.0, Ct_reference = 18.0
+  )
+  result <- compute_delta_ct(df)
+  expect_true(all(c("Sample", "Group", "Gene", "Ct_target", "Ct_reference", "delta_ct") %in% names(result)))
+})
