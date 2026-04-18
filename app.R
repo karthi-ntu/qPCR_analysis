@@ -31,7 +31,17 @@ ui <- fluidPage(
         column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
       ),
       hr(),
-      h5("Data entry"),
+      h5("Paste from Excel"),
+      p(style = "font-size:12px; color:#888;",
+        "Copy cells from Excel in this column order:",
+        br(), strong("Sample | Group | Gene | Ct_target | Ct_reference")),
+      textAreaInput("paste_data", label = NULL,
+                    placeholder = "Paste here (Ctrl+V), then click Load",
+                    rows = 4, width = "100%"),
+      actionButton("load_paste", "Load pasted data", icon = icon("upload"),
+                   style = "width:100%; margin-bottom:6px;"),
+      hr(),
+      h5("Or enter row by row"),
       DTOutput("table"),
       br(),
       actionButton("add_row",   "Add row",    icon = icon("plus")),
@@ -90,6 +100,29 @@ server <- function(input, output, session) {
 
   observeEvent(input$clear_tbl, {
     rv$data <- empty_table()
+  })
+
+  observeEvent(input$load_paste, {
+    txt <- trimws(input$paste_data)
+    req(nchar(txt) > 0)
+    lines <- strsplit(txt, "\n")[[1]]
+    rows <- lapply(lines, function(line) {
+      fields <- strsplit(trimws(line), "\t")[[1]]
+      if (length(fields) < 5) return(NULL)
+      data.frame(
+        Sample       = trimws(fields[1]),
+        Group        = trimws(fields[2]),
+        Gene         = trimws(fields[3]),
+        Ct_target    = suppressWarnings(as.numeric(fields[4])),
+        Ct_reference = suppressWarnings(as.numeric(fields[5])),
+        stringsAsFactors = FALSE
+      )
+    })
+    parsed <- do.call(rbind, Filter(Negate(is.null), rows))
+    if (!is.null(parsed) && nrow(parsed) > 0) {
+      rv$data <- parsed
+      updateTextAreaInput(session, "paste_data", value = "")
+    }
   })
 
   # -- Validation -------------------------------------------------------------
