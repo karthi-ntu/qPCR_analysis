@@ -6,7 +6,11 @@
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3618\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3619\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3620\\)\")",
-      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3621\\)\")"
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3621\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3622\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3623\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3624\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3625\\)\")"
     ]
   }
 }
