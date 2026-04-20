@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3616\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3617\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3618\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3619\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3620\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3621\\)\")"
+    ]
+  }
+}
