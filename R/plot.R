@@ -109,12 +109,12 @@ make_barplot <- function(full_df, stats_df, gene,
         comparisons      = comparisons_list,
         annotations      = format_pvalue(sig$p_value),
         map_signif_level = FALSE,
-        step_increase    = 0.1,
-        textsize         = 4.5,
+        step_increase    = 0.13,
+        textsize         = 3.5,
         fontface         = "bold",
-        vjust            = -0.4,
-        tip_length       = 0.025,
-        size             = 0.8,
+        vjust            = -0.6,
+        tip_length       = 0.02,
+        size             = 0.7,
         color            = "black"
       )
     }
@@ -190,7 +190,7 @@ make_combined_plot <- function(full_df, stats_df,
         y_hi  <- max(gene_data$log2_fold_change, na.rm = TRUE)
         y_lo  <- min(gene_data$log2_fold_change, na.rm = TRUE)
         rng   <- max(y_hi - y_lo, 1)
-        step  <- 0.12 * rng
+        step  <- 0.16 * rng
         pairs <- strsplit(gsub$Comparison, " vs ", fixed = TRUE)
         data.frame(
           Gene         = gsub$Gene,
@@ -274,7 +274,7 @@ make_paired_plot <- function(full_df, stats_df,
         y_hi  <- max(gene_data$log2_fold_change, na.rm = TRUE)
         y_lo  <- min(gene_data$log2_fold_change, na.rm = TRUE)
         rng   <- max(y_hi - y_lo, 1)
-        step  <- 0.12 * rng
+        step  <- 0.16 * rng
         pairs <- strsplit(gsub$Comparison, " vs ", fixed = TRUE)
         data.frame(
           Gene        = gsub$Gene,
