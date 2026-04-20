@@ -21,42 +21,9 @@ compute_fold_change <- function(df, control_group) {
   do.call(rbind, result_list)
 }
 
-# --- Normality test (Shapiro-Wilk per group per gene) ----------------------
-run_normality <- function(df) {
-  genes <- unique(df$Gene)
-  rows <- lapply(genes, function(gene) {
-    sub    <- df[df$Gene == gene, ]
-    groups <- unique(sub$Group)
-    do.call(rbind, lapply(groups, function(grp) {
-      vals <- sub$delta_ct[sub$Group == grp]
-      vals <- vals[!is.na(vals)]
-      if (length(vals) < 3) {
-        data.frame(Gene = gene, Group = grp, n = length(vals),
-                   shapiro_p = NA_real_, Normal = NA_character_,
-                   stringsAsFactors = FALSE)
-      } else {
-        p <- tryCatch(shapiro.test(vals)$p.value, error = function(e) NA_real_)
-        data.frame(Gene = gene, Group = grp, n = length(vals),
-                   shapiro_p = round(p, 4),
-                   Normal    = ifelse(is.na(p), "NA", ifelse(p > 0.05, "Yes", "No")),
-                   stringsAsFactors = FALSE)
-      }
-    }))
-  })
-  do.call(rbind, rows)
-}
-
-# Is all data normal per gene? (TRUE if all Shapiro p > 0.05 or too few samples)
-is_all_normal <- function(norm_df, gene) {
-  sub <- norm_df[norm_df$Gene == gene, ]
-  ps  <- sub$shapiro_p[!is.na(sub$shapiro_p)]
-  if (length(ps) == 0) return(TRUE)
-  all(ps > 0.05)
-}
-
-# --- Main stats (parametric / nonparametric / auto) ------------------------
+# --- Main stats (parametric / nonparametric) -------------------------------
 run_stats <- function(df, paired = FALSE, test_type = "parametric",
-                      norm_df = NULL, has_subgroup = FALSE) {
+                      has_subgroup = FALSE) {
   genes <- unique(df$Gene)
 
   results <- lapply(genes, function(gene) {
@@ -68,19 +35,14 @@ run_stats <- function(df, paired = FALSE, test_type = "parametric",
       return(run_two_way(sub, gene))
     }
 
-    # Decide parametric vs nonparametric for this gene
-    use_type <- test_type
-    if (test_type == "auto" && !is.null(norm_df))
-      use_type <- if (is_all_normal(norm_df, gene)) "parametric" else "nonparametric"
-
     groups   <- unique(sub$Group)
     n_groups <- length(groups)
     if (n_groups < 2) return(NULL)
 
     if (n_groups == 2) {
-      run_two_group(sub, gene, groups, paired, use_type)
+      run_two_group(sub, gene, groups, paired, test_type)
     } else {
-      run_multi_group(sub, gene, use_type)
+      run_multi_group(sub, gene, test_type)
     }
   })
 
@@ -223,8 +185,49 @@ summarize_groups <- function(df) {
   do.call(rbind, Filter(Negate(is.null), unlist(rows, recursive = FALSE)))
 }
 
+# --- Paired / repeated-measures analysis -----------------------------------
+# Detect whether data is repeated-measures: same Sample in 2+ Groups
+is_repeated_measures <- function(df) {
+  if (nrow(df) == 0) return(FALSE)
+  counts <- tapply(df$Group, df$Sample, function(x) length(unique(x)))
+  any(counts >= 2, na.rm = TRUE)
+}
+
+# Per-gene paired tests between each pair of groups
+run_paired_stats <- function(df) {
+  genes <- unique(df$Gene)
+  results <- lapply(genes, function(gene) {
+    sub    <- df[df$Gene == gene, ]
+    groups <- unique(sub$Group)
+    if (length(groups) < 2) return(NULL)
+    # All unordered pairs of groups
+    pair_idx <- combn(length(groups), 2, simplify = FALSE)
+    rows <- lapply(pair_idx, function(ij) {
+      g1 <- groups[ij[1]]; g2 <- groups[ij[2]]
+      d1 <- sub[sub$Group == g1, ]
+      d2 <- sub[sub$Group == g2, ]
+      common <- intersect(d1$Sample, d2$Sample)
+      if (length(common) < 2) return(NULL)
+      v1 <- d1$delta_ct[match(common, d1$Sample)]
+      v2 <- d2$delta_ct[match(common, d2$Sample)]
+      p  <- tryCatch(t.test(v1, v2, paired = TRUE)$p.value,
+                     error = function(e) NA_real_)
+      data.frame(
+        Gene        = gene,
+        Comparison  = paste(g1, "vs", g2),
+        Test        = paste0("Paired t-test (n=", length(common), ")"),
+        p_value     = signif(p, 4),
+        Significant = ifelse(!is.na(p) & p < 0.05, "Yes", "No"),
+        stringsAsFactors = FALSE
+      )
+    })
+    do.call(rbind, Filter(Negate(is.null), rows))
+  })
+  do.call(rbind, Filter(Negate(is.null), results))
+}
+
 # --- Methods text generator ------------------------------------------------
-generate_methods_text <- function(df, stats_df, norm_df, test_type,
+generate_methods_text <- function(df, stats_df, test_type,
                                   paired, control_group, has_subgroup = FALSE) {
   n_per_grp <- table(df$Sample[!duplicated(df[, c("Sample", "Group")])],
                      df$Group[!duplicated(df[, c("Sample", "Group")])])
@@ -233,8 +236,6 @@ generate_methods_text <- function(df, stats_df, norm_df, test_type,
            else paste0("n = ", n_range[1], "-", n_range[2])
 
   genes <- unique(df$Gene)
-
-  # Determine which test was actually used
   tests_used <- unique(stats_df$Test)
   test_desc <- paste(tests_used, collapse = " / ")
 
@@ -245,8 +246,6 @@ generate_methods_text <- function(df, stats_df, norm_df, test_type,
     paste0("Data for ", length(genes), " gene(s) (",
            paste(genes, collapse = ", "),
            ") were analyzed (", n_txt, " biological replicates per group)."),
-    if (!is.null(norm_df) && any(!is.na(norm_df$shapiro_p)))
-      paste0("Normality was assessed with the Shapiro-Wilk test."),
     paste0("Statistical testing: ", test_desc, "."),
     if (paired) "Paired design was applied where sample pairing was available." else NULL,
     if (has_subgroup) "A two-factor design (Group x Subgroup) was analyzed by two-way ANOVA." else NULL,
