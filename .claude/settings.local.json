@@ -10,7 +10,11 @@
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3622\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3623\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3624\\)\")",
-      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3625\\)\")"
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3625\\)\")",
+      "WebFetch(domain:doi.org)",
+      "WebFetch(domain:academic.oup.com)",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"packageVersion\\('shinylive'\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"install.packages\\('shinylive', repos = 'https://posit-dev.r-universe.dev'\\)\")"
     ]
   }
 }
