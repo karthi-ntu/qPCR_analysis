@@ -16,7 +16,10 @@
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"packageVersion\\('shinylive'\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"install.packages\\('shinylive', repos = 'https://posit-dev.r-universe.dev'\\)\")",
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shinylive::export\\(appdir = 'E:/qPCR_analysis', destdir = 'E:/qPCR_analysis/docs'\\)\")",
-      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3627\\)\")"
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3627\\)\")",
+      "WebFetch(domain:shinylive.io)",
+      "WebFetch(domain:github.com)",
+      "WebSearch"
     ]
   }
 }
