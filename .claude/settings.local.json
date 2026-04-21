@@ -29,7 +29,8 @@
       "Bash(\"/c/Program Files/R/R-4.5.3/bin/Rscript.exe\" -e \"shinylive::export\\(appdir='E:/qPCR_analysis', destdir='E:/qPCR_analysis/docs'\\)\")",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(grep -n 'control_group = input$ctrl_group\\\\|control_group       = input$ctrl_group' E:/qPCR_analysis/app.R)"
     ]
   }
 }
