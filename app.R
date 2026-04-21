@@ -219,11 +219,16 @@ ui <- navbarPage(
         verbatimTextOutput("methods_text"),
         br(),
         fluidRow(
-          column(3, downloadButton("dl_png",     "Plot (PNG)")),
-          column(3, downloadButton("dl_pdf",     "Plot (PDF)")),
-          column(3, downloadButton("dl_csv",     "Stats (CSV)")),
-          column(3, downloadButton("dl_methods", "Methods (TXT)"))
-        )
+          column(3, downloadButton("dl_svg",     "Plot (SVG)")),
+          column(2, downloadButton("dl_png",     "PNG")),
+          column(2, downloadButton("dl_pdf",     "PDF")),
+          column(2, downloadButton("dl_csv",     "Stats CSV")),
+          column(3, downloadButton("dl_methods", "Methods TXT"))
+        ),
+        p(style = "font-size:12px; color:#888; margin-top:8px;",
+          strong("SVG"), " is recommended for the online (GitHub Pages) version \u2014 ",
+          "opens in any browser, Illustrator, Inkscape; infinite resolution. ",
+          em("PNG/PDF only work reliably in the local version."))
       )
     )
   ),
@@ -250,10 +255,13 @@ ui <- navbarPage(
         DTOutput("rm_stats_table"),
         br(),
         fluidRow(
-          column(4, downloadButton("rm_dl_png", "Plot (PNG)")),
-          column(4, downloadButton("rm_dl_pdf", "Plot (PDF)")),
-          column(4, downloadButton("rm_dl_csv", "Stats (CSV)"))
-        )
+          column(3, downloadButton("rm_dl_svg", "Plot (SVG)")),
+          column(3, downloadButton("rm_dl_png", "PNG")),
+          column(3, downloadButton("rm_dl_pdf", "PDF")),
+          column(3, downloadButton("rm_dl_csv", "Stats CSV"))
+        ),
+        p(style = "font-size:12px; color:#888; margin-top:8px;",
+          em("SVG works on GitHub Pages; PNG/PDF only work locally."))
       )
     )
   ),
@@ -541,6 +549,17 @@ server <- function(input, output, session) {
     list(w = 4.5 * ncol, h = 4.5 * nrow)
   }
 
+  output$dl_svg <- downloadHandler(
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".svg"),
+    contentType = "image/svg+xml",
+    content     = function(file) {
+      req(genes_in_data())
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
+             device = "svg", bg = "white")
+    }
+  )
+
   output$dl_png <- downloadHandler(
     filename    = function() paste0("qpcr_plot_", Sys.Date(), ".png"),
     contentType = "image/png",
@@ -652,6 +671,17 @@ server <- function(input, output, session) {
     nrow <- ceiling(n / ncol)
     list(w = 5 * ncol, h = 5 * nrow)
   }
+
+  output$rm_dl_svg <- downloadHandler(
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".svg"),
+    contentType = "image/svg+xml",
+    content     = function(file) {
+      req(rm_valid()$ok)
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+             device = "svg", bg = "white")
+    }
+  )
 
   output$rm_dl_png <- downloadHandler(
     filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".png"),
