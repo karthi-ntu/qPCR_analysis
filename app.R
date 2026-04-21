@@ -161,9 +161,31 @@ help_content <- function() {
       "mouse5   Treated  17.58            20.51    26.25\n",
       "mouse6   Treated  18.38            21.02    26.39"
     ),
-    p(em("Optional:"), " add a ", code("Subgroup"), " column (as the 3rd column, before ",
-      code("Reference gene"), ") to run two-way ANOVA. Example: ",
-      code("Sample | Group | Subgroup | Reference gene | Gene1 | Gene2")),
+    p(em("Optional \u2014 two-factor design (e.g. Young/Aged \u00d7 Carrier/Thapsigargin):"),
+      " add a ", code("Subgroup"), " column as the ", strong("3rd column"),
+      " (between ", code("Group"), " and ", code("Reference gene"),
+      "). The header must be exactly ", code("Subgroup"),
+      " (or ", code("Factor2"), "). Example:"),
+    tags$pre(
+      "Sample   Group   Subgroup  Reference gene   Gene1   Gene2\n",
+      "cell1    Young   Carrier   13.50            20.51   25.40\n",
+      "cell2    Young   Carrier   13.56            20.62   25.23\n",
+      "cell3    Young   Carrier   13.64            20.53   25.28\n",
+      "cell4    Young   Thaps     17.60            17.20   22.10\n",
+      "cell5    Young   Thaps     17.58            17.15   22.30\n",
+      "cell6    Young   Thaps     18.38            17.40   22.40\n",
+      "cell7    Aged    Carrier   13.55            20.35   25.15\n",
+      "cell8    Aged    Carrier   13.60            20.40   25.20\n",
+      "cell9    Aged    Carrier   13.65            20.30   25.10\n",
+      "cell10   Aged    Thaps     17.62            16.10   21.25\n",
+      "cell11   Aged    Thaps     17.55            16.25   21.40\n",
+      "cell12   Aged    Thaps     18.40            16.35   21.55"
+    ),
+    p("With a ", code("Subgroup"), " column present, the app automatically runs ",
+      strong("two-way ANOVA"), " (main effects of Group, Subgroup, and the Group\u00d7Subgroup interaction) ",
+      "plus ", strong("Tukey HSD"), " pairwise tests between all 4 interaction cells. ",
+      "The plot x-axis shows the 4 combinations (", code("Young | Carrier"),
+      ", ", code("Young | Thaps"), ", ...) and dots are colored by Subgroup."),
     h3("Expected input format \u2014 Repeated Measures tab"),
     p("Same header, but ", strong("each Sample name must appear in 2 or more Groups"), ":"),
     tags$pre(
@@ -451,6 +473,7 @@ server <- function(input, output, session) {
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
+                       has_subgroup  = has_subgroup(),
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   })
@@ -469,6 +492,7 @@ server <- function(input, output, session) {
                        control_group = input$ctrl_group,
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
+                       has_subgroup  = has_subgroup(),
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
@@ -508,6 +532,7 @@ server <- function(input, output, session) {
                    control_group = input$ctrl_group,
                    rotate_x      = input$rotate_x,
                    aspect_ratio  = input$aspect_ratio,
+                   has_subgroup  = has_subgroup(),
                    y_min = if (is.na(input$y_min)) NULL else input$y_min,
                    y_max = if (is.na(input$y_max)) NULL else input$y_max))
   }
@@ -522,6 +547,7 @@ server <- function(input, output, session) {
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
+                       has_subgroup  = has_subgroup(),
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
@@ -539,6 +565,7 @@ server <- function(input, output, session) {
                        rotate_x            = input$rotate_x,
                        aspect_ratio        = input$aspect_ratio,
                        ncol = max(1, as.integer(input$facet_ncol %||% 3)),
+                       has_subgroup        = has_subgroup(),
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }

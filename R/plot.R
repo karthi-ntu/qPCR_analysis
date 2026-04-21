@@ -55,13 +55,27 @@ make_barplot <- function(full_df, stats_df, gene,
                          sig_comparisons = NULL,
                          control_group = "Control",
                          rotate_x      = FALSE,
-                         aspect_ratio  = 1) {
+                         aspect_ratio  = 1,
+                         has_subgroup  = FALSE) {
   sub <- full_df[full_df$Gene == gene, ]
   sub$Group <- factor(sub$Group, levels = unique(sub$Group))
-  n_groups <- nlevels(sub$Group)
   err_fun  <- make_err_fun(error_type)
 
-  p <- ggplot(sub, aes(x = Group, y = log2_fold_change, fill = Group)) +
+  use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(sub) &&
+             length(unique(sub$Subgroup)) >= 2
+  if (use_sub) {
+    sub$Subgroup <- factor(sub$Subgroup, levels = unique(sub$Subgroup))
+    sub$XCell    <- interaction(sub$Group, sub$Subgroup,
+                                sep = " | ", drop = TRUE, lex.order = FALSE)
+    n_fills <- nlevels(sub$Subgroup)
+    p <- ggplot(sub, aes(x = XCell, y = log2_fold_change, fill = Subgroup))
+    # Longer labels in the 2x2 case — auto-rotate if user didn't already.
+    rotate_x <- TRUE
+  } else {
+    n_fills <- nlevels(sub$Group)
+    p <- ggplot(sub, aes(x = Group, y = log2_fold_change, fill = Group))
+  }
+  p <- p +
     geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.8, color = "gray40")
 
   if (plot_type == "column") {
@@ -84,14 +98,20 @@ make_barplot <- function(full_df, stats_df, gene,
   }
 
   p <- p +
-    scale_fill_manual(values = rep_len(OKABE_ITO, n_groups)) +
+    scale_fill_manual(values = rep_len(OKABE_ITO, n_fills)) +
     labs(
       title = gene,
       y     = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
-      x     = NULL
+      x     = NULL,
+      fill  = if (use_sub) "Subgroup" else NULL
     ) +
     prism_theme(rotate_x = rotate_x) +
     theme(aspect.ratio = aspect_ratio)
+
+  if (use_sub) {
+    p <- p + theme(legend.position = "top",
+                   legend.title    = element_text(face = "bold"))
+  }
 
   if (!is.null(y_min) || !is.null(y_max))
     p <- p + coord_cartesian(ylim = c(if (is.null(y_min)) NA else y_min,
@@ -133,13 +153,26 @@ make_combined_plot <- function(full_df, stats_df,
                                control_group = "Control",
                                rotate_x      = FALSE,
                                aspect_ratio  = 1,
-                               ncol          = 3) {
+                               ncol          = 3,
+                               has_subgroup  = FALSE) {
   full_df$Gene  <- factor(full_df$Gene,  levels = unique(full_df$Gene))
   full_df$Group <- factor(full_df$Group, levels = unique(full_df$Group))
-  n_groups <- nlevels(full_df$Group)
   err_fun  <- make_err_fun(error_type)
 
-  p <- ggplot(full_df, aes(x = Group, y = log2_fold_change, fill = Group)) +
+  use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(full_df) &&
+             length(unique(full_df$Subgroup)) >= 2
+  if (use_sub) {
+    full_df$Subgroup <- factor(full_df$Subgroup, levels = unique(full_df$Subgroup))
+    full_df$XCell    <- interaction(full_df$Group, full_df$Subgroup,
+                                    sep = " | ", drop = TRUE, lex.order = FALSE)
+    n_fills <- nlevels(full_df$Subgroup)
+    p <- ggplot(full_df, aes(x = XCell, y = log2_fold_change, fill = Subgroup))
+    rotate_x <- TRUE
+  } else {
+    n_fills <- nlevels(full_df$Group)
+    p <- ggplot(full_df, aes(x = Group, y = log2_fold_change, fill = Group))
+  }
+  p <- p +
     geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.8, color = "gray40")
 
   if (plot_type == "column") {
@@ -162,14 +195,20 @@ make_combined_plot <- function(full_df, stats_df,
   }
 
   p <- p +
-    scale_fill_manual(values = rep_len(OKABE_ITO, n_groups)) +
+    scale_fill_manual(values = rep_len(OKABE_ITO, n_fills)) +
     facet_wrap(~ Gene, scales = "free_y", ncol = ncol) +
     labs(
-      y = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
-      x = NULL
+      y    = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
+      x    = NULL,
+      fill = if (use_sub) "Subgroup" else NULL
     ) +
     prism_theme(rotate_x = rotate_x) +
     theme(aspect.ratio = aspect_ratio)
+
+  if (use_sub) {
+    p <- p + theme(legend.position = "top",
+                   legend.title    = element_text(face = "bold"))
+  }
 
   if (!is.null(y_min) || !is.null(y_max))
     p <- p + coord_cartesian(ylim = c(if (is.null(y_min)) NA else y_min,

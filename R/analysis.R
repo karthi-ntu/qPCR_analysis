@@ -142,8 +142,7 @@ run_two_way <- function(sub, gene) {
   if (is.null(fit)) return(NULL)
   s <- summary(fit)[[1]]
   # Extract main effect and interaction p-values
-  terms <- rownames(s)
-  terms <- trimws(terms)
+  terms <- trimws(rownames(s))
   pick  <- function(name) {
     i <- which(terms == name)
     if (length(i) == 0) return(NA_real_)
@@ -152,15 +151,59 @@ run_two_way <- function(sub, gene) {
   p_group     <- pick("Group")
   p_subgroup  <- pick("Subgroup")
   p_inter     <- pick("Group:Subgroup")
-  data.frame(
+  main_df <- data.frame(
     Gene        = rep(gene, 3),
     Comparison  = c("Group (main effect)", "Subgroup (main effect)",
                     "Group x Subgroup (interaction)"),
     Test        = rep("Two-way ANOVA", 3),
     p_value     = signif(c(p_group, p_subgroup, p_inter), 4),
-    Significant = ifelse(c(p_group, p_subgroup, p_inter) < 0.05, "Yes", "No"),
+    Significant = ifelse(!is.na(c(p_group, p_subgroup, p_inter)) &
+                           c(p_group, p_subgroup, p_inter) < 0.05, "Yes", "No"),
     stringsAsFactors = FALSE
   )
+
+  # --- Pairwise Tukey HSD on the 4 (or N) interaction cells ---------------
+  # Build a combined factor whose levels match the plot x-axis exactly.
+  sub$Combined <- interaction(sub$Group, sub$Subgroup,
+                              sep = " | ", drop = TRUE, lex.order = FALSE)
+  fit_c <- tryCatch(aov(delta_ct ~ Combined, data = sub),
+                    error = function(e) NULL)
+  pair_df <- NULL
+  if (!is.null(fit_c)) {
+    tk <- tryCatch(TukeyHSD(fit_c)$Combined, error = function(e) NULL)
+    if (!is.null(tk) && nrow(tk) > 0) {
+      # Parse rownames safely: each rowname is "<levelA>-<levelB>" where both
+      # levels are known. Search the level set to find the split point (levels
+      # may themselves contain "-").
+      levs <- levels(sub$Combined)
+      parse_pair <- function(rn) {
+        for (L in levs) {
+          suffix <- paste0("-", L)
+          if (endsWith(rn, suffix)) {
+            pre <- substr(rn, 1, nchar(rn) - nchar(suffix))
+            if (pre %in% levs) return(c(pre, L))
+          }
+        }
+        c(NA_character_, NA_character_)
+      }
+      pairs  <- t(vapply(rownames(tk), parse_pair, character(2)))
+      pvals  <- tk[, "p adj"]
+      keep   <- !is.na(pairs[, 1])
+      if (any(keep)) {
+        pair_df <- data.frame(
+          Gene        = rep(gene, sum(keep)),
+          Comparison  = paste(pairs[keep, 1], "vs", pairs[keep, 2]),
+          Test        = rep("Two-way ANOVA + Tukey HSD (pairwise)", sum(keep)),
+          p_value     = signif(pvals[keep], 4),
+          Significant = ifelse(!is.na(pvals[keep]) & pvals[keep] < 0.05,
+                               "Yes", "No"),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+
+  if (!is.null(pair_df)) rbind(main_df, pair_df) else main_df
 }
 
 summarize_groups <- function(df) {
