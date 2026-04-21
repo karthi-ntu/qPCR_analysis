@@ -19,7 +19,17 @@
       "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.5.3\\\\bin\\\\Rscript.exe\" -e \"shiny::runApp\\('E:/qPCR_analysis/app.R', launch.browser=TRUE, port=3627\\)\")",
       "WebFetch(domain:shinylive.io)",
       "WebFetch(domain:github.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(\"/c/Program Files/R/R-4.5.1/bin/Rscript.exe\" -e \"testthat::test_dir\\('tests/testthat', reporter='summary'\\)\")",
+      "Read(//c/Program Files/R//**)",
+      "Read(//c/Program Files/R/**)",
+      "Bash(\"/c/Program Files/R/R-4.5.3/bin/Rscript.exe\" -e \"testthat::test_dir\\('tests/testthat', reporter='summary'\\)\")",
+      "Bash('/c/Program Files/R/R-4.5.3/bin/Rscript.exe' -e ' *)",
+      "Bash(\"/c/Program Files/R/R-4.5.3/bin/Rscript.exe\" -e 'source\\(\"R/analysis.R\"\\); source\\(\"R/plot.R\"\\); set.seed\\(1\\); df <- data.frame\\(Sample=paste0\\(\"c\",1:12\\), Group=rep\\(c\\(\"Young\",\"Aged\"\\),each=6\\), Subgroup=rep\\(c\\(\"Carrier\",\"Thaps\",\"Carrier\",\"Thaps\"\\),each=3\\), Gene=\"Herpud1\", Ct_target=c\\(rnorm\\(3,20\\),rnorm\\(3,17\\),rnorm\\(3,20\\),rnorm\\(3,16\\)\\), Ct_reference=rnorm\\(12,14,0.2\\), stringsAsFactors=FALSE\\); d <- compute_delta_ct\\(df\\); d <- compute_fold_change\\(d,\"Young\"\\); stats <- run_stats\\(d, has_subgroup=TRUE\\); print\\(stats\\); p <- make_barplot\\(d, stats, \"Herpud1\", has_subgroup=TRUE, control_group=\"Young\"\\); cat\\(\"plot ok:\", inherits\\(p,\"ggplot\"\\), \"\\\\n\"\\)')",
+      "Bash(\"/c/Program Files/R/R-4.5.3/bin/Rscript.exe\" -e \"shinylive::export\\(appdir='E:/qPCR_analysis', destdir='E:/qPCR_analysis/docs'\\)\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
