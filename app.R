@@ -2,7 +2,15 @@ library(shiny)
 library(ggplot2)
 library(DT)
 library(ggsignif)
-library(base64enc)
+
+# Shinylive workaround: strip `download` attribute from downloadButton, otherwise
+# Chromium browsers save the file as .htm/.xml in WebAssembly.
+# https://posit-dev.github.io/r-shinylive/ (Chromium issue 468227 workaround)
+downloadButton <- function(...) {
+  tag <- shiny::downloadButton(...)
+  tag$attribs$download <- NULL
+  tag
+}
 
 source("R/analysis.R")
 source("R/plot.R")
@@ -202,22 +210,9 @@ help_content <- function() {
   )
 }
 
-# ---- Download-via-JS helper (works in Shinylive WASM) ---------------------
-js_download_handler <- tags$script(HTML("
-  Shiny.addCustomMessageHandler('triggerDownload', function(msg) {
-    var link = document.createElement('a');
-    link.href = msg.dataUrl;
-    link.download = msg.filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  });
-"))
-
 # ---- UI -------------------------------------------------------------------
 ui <- navbarPage(
   title = "qPCR Analysis \u2014 \u0394\u0394Ct Method",
-  header = tags$head(js_download_handler),
   tabPanel(
     "Analysis",
     sidebarLayout(
@@ -233,12 +228,11 @@ ui <- navbarPage(
         verbatimTextOutput("methods_text"),
         br(),
         fluidRow(
-          column(3, actionButton("dl_png_click", "Plot (PNG)", icon = icon("download"))),
-          column(3, actionButton("dl_pdf_click", "Plot (PDF)", icon = icon("download"))),
+          column(3, downloadButton("dl_png",     "Plot (PNG)")),
+          column(3, downloadButton("dl_pdf",     "Plot (PDF)")),
           column(3, downloadButton("dl_csv",     "Stats (CSV)")),
           column(3, downloadButton("dl_methods", "Methods (TXT)"))
-        ),
-        verbatimTextOutput("dl_status", placeholder = TRUE)
+        )
       )
     )
   ),
@@ -265,11 +259,10 @@ ui <- navbarPage(
         DTOutput("rm_stats_table"),
         br(),
         fluidRow(
-          column(4, actionButton("rm_dl_png_click", "Plot (PNG)", icon = icon("download"))),
-          column(4, actionButton("rm_dl_pdf_click", "Plot (PDF)", icon = icon("download"))),
-          column(4, downloadButton("rm_dl_csv",     "Stats (CSV)"))
-        ),
-        verbatimTextOutput("rm_dl_status", placeholder = TRUE)
+          column(4, downloadButton("rm_dl_png", "Plot (PNG)")),
+          column(4, downloadButton("rm_dl_pdf", "Plot (PDF)")),
+          column(4, downloadButton("rm_dl_csv", "Stats (CSV)"))
+        )
       )
     )
   ),
@@ -557,56 +550,27 @@ server <- function(input, output, session) {
     list(w = 4.5 * ncol, h = 4.5 * nrow)
   }
 
-  dl_status_rv <- reactiveVal("")
-  output$dl_status <- renderText({ dl_status_rv() })
-
-  trigger_download <- function(dataUrl, filename) {
-    session$sendCustomMessage("triggerDownload",
-                              list(dataUrl = dataUrl, filename = filename))
-  }
-
-  file_to_dataurl <- function(path, mime) {
-    bytes <- readBin(path, "raw", file.info(path)$size)
-    paste0("data:", mime, ";base64,", base64enc::base64encode(bytes))
-  }
-
-  observeEvent(input$dl_png_click, {
-    req(genes_in_data())
-    dl_status_rv("Generating PNG...")
-    d <- download_dims()
-    result <- tryCatch({
-      tmp <- tempfile(fileext = ".png")
-      ggsave(tmp, download_plot(), width = d$w, height = d$h,
+  output$dl_png <- downloadHandler(
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".png"),
+    contentType = "image/png",
+    content     = function(file) {
+      req(genes_in_data())
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
              dpi = 300, device = "png", bg = "white")
-      file_to_dataurl(tmp, "image/png")
-    }, error = function(e) {
-      dl_status_rv(paste("PNG error:", conditionMessage(e)))
-      NULL
-    })
-    if (!is.null(result)) {
-      trigger_download(result, paste0("qpcr_plot_", Sys.Date(), ".png"))
-      dl_status_rv("PNG download triggered.")
     }
-  })
+  )
 
-  observeEvent(input$dl_pdf_click, {
-    req(genes_in_data())
-    dl_status_rv("Generating PDF...")
-    d <- download_dims()
-    result <- tryCatch({
-      tmp <- tempfile(fileext = ".pdf")
-      ggsave(tmp, download_plot(), width = d$w, height = d$h,
+  output$dl_pdf <- downloadHandler(
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".pdf"),
+    contentType = "application/pdf",
+    content     = function(file) {
+      req(genes_in_data())
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
              device = "pdf", bg = "white")
-      file_to_dataurl(tmp, "application/pdf")
-    }, error = function(e) {
-      dl_status_rv(paste("PDF error:", conditionMessage(e)))
-      NULL
-    })
-    if (!is.null(result)) {
-      trigger_download(result, paste0("qpcr_plot_", Sys.Date(), ".pdf"))
-      dl_status_rv("PDF download triggered.")
     }
-  })
+  )
 
   output$dl_csv <- downloadHandler(
     filename    = function() paste0("qpcr_stats_", Sys.Date(), ".csv"),
@@ -698,46 +662,27 @@ server <- function(input, output, session) {
     list(w = 5 * ncol, h = 5 * nrow)
   }
 
-  rm_dl_status_rv <- reactiveVal("")
-  output$rm_dl_status <- renderText({ rm_dl_status_rv() })
-
-  observeEvent(input$rm_dl_png_click, {
-    req(rm_valid()$ok)
-    rm_dl_status_rv("Generating PNG...")
-    d <- rm_download_dims()
-    result <- tryCatch({
-      tmp <- tempfile(fileext = ".png")
-      ggsave(tmp, render_rm_plot(), width = d$w, height = d$h,
+  output$rm_dl_png <- downloadHandler(
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".png"),
+    contentType = "image/png",
+    content     = function(file) {
+      req(rm_valid()$ok)
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
              dpi = 300, device = "png", bg = "white")
-      file_to_dataurl(tmp, "image/png")
-    }, error = function(e) {
-      rm_dl_status_rv(paste("PNG error:", conditionMessage(e)))
-      NULL
-    })
-    if (!is.null(result)) {
-      trigger_download(result, paste0("qpcr_rm_plot_", Sys.Date(), ".png"))
-      rm_dl_status_rv("PNG download triggered.")
     }
-  })
+  )
 
-  observeEvent(input$rm_dl_pdf_click, {
-    req(rm_valid()$ok)
-    rm_dl_status_rv("Generating PDF...")
-    d <- rm_download_dims()
-    result <- tryCatch({
-      tmp <- tempfile(fileext = ".pdf")
-      ggsave(tmp, render_rm_plot(), width = d$w, height = d$h,
+  output$rm_dl_pdf <- downloadHandler(
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".pdf"),
+    contentType = "application/pdf",
+    content     = function(file) {
+      req(rm_valid()$ok)
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
              device = "pdf", bg = "white")
-      file_to_dataurl(tmp, "application/pdf")
-    }, error = function(e) {
-      rm_dl_status_rv(paste("PDF error:", conditionMessage(e)))
-      NULL
-    })
-    if (!is.null(result)) {
-      trigger_download(result, paste0("qpcr_rm_plot_", Sys.Date(), ".pdf"))
-      rm_dl_status_rv("PDF download triggered.")
     }
-  })
+  )
 
   output$rm_dl_csv <- downloadHandler(
     filename    = function() paste0("qpcr_rm_stats_", Sys.Date(), ".csv"),
