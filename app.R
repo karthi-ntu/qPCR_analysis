@@ -517,55 +517,65 @@ server <- function(input, output, session) {
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
 
+  # Always render a single combined facet plot for download
+  # (Shinylive-compatible: single ggplot + ggsave works reliably; raw png()/pdf()
+  # devices can fail silently in WebAssembly.)
+  download_plot <- function() {
+    make_combined_plot(analyzed(), stats_result(),
+                       error_type          = input$error_type,
+                       plot_type           = input$plot_type,
+                       show_sig            = input$show_sig,
+                       sig_comparisons_all = input$visible_comps,
+                       control_group       = input$ctrl_group,
+                       rotate_x            = input$rotate_x,
+                       aspect_ratio        = input$aspect_ratio,
+                       ncol = max(1, as.integer(input$facet_ncol %||% 3)),
+                       y_min = if (is.na(input$y_min)) NULL else input$y_min,
+                       y_max = if (is.na(input$y_max)) NULL else input$y_max)
+  }
+
+  download_dims <- function() {
+    n    <- length(genes_in_data())
+    ncol <- max(1, as.integer(input$facet_ncol %||% 3))
+    nrow <- ceiling(n / ncol)
+    list(w = 4.5 * ncol, h = 4.5 * nrow)
+  }
+
   output$dl_png <- downloadHandler(
-    filename = function() paste0("qpcr_plot_", Sys.Date(), ".png"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".png"),
+    contentType = "image/png",
+    content     = function(file) {
       req(genes_in_data())
-      n <- length(genes_in_data())
-      if (identical(input$plot_layout, "combined")) {
-        ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-        nrow <- ceiling(n / ncol)
-        png(file, width = 1600 * ncol, height = 1600 * nrow, res = 600)
-        on.exit(dev.off(), add = TRUE)
-        print(render_combined_plot())
-      } else {
-        png(file, width = 3200, height = 2000 * n, res = 600)
-        on.exit(dev.off(), add = TRUE)
-        for (p in render_individual_plots()) print(p)
-      }
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
+             dpi = 300, device = "png", bg = "white")
     }
   )
 
   output$dl_pdf <- downloadHandler(
-    filename = function() paste0("qpcr_plot_", Sys.Date(), ".pdf"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".pdf"),
+    contentType = "application/pdf",
+    content     = function(file) {
       req(genes_in_data())
-      n <- length(genes_in_data())
-      if (identical(input$plot_layout, "combined")) {
-        ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-        nrow <- ceiling(n / ncol)
-        pdf(file, width = 4 * ncol, height = 4 * nrow)
-        on.exit(dev.off(), add = TRUE)
-        print(render_combined_plot())
-      } else {
-        pdf(file, width = 7, height = 5 * n)
-        on.exit(dev.off(), add = TRUE)
-        for (p in render_individual_plots()) print(p)
-      }
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
+             device = "pdf", bg = "white")
     }
   )
 
   output$dl_csv <- downloadHandler(
-    filename = function() paste0("qpcr_stats_", Sys.Date(), ".csv"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_stats_", Sys.Date(), ".csv"),
+    contentType = "text/csv",
+    content     = function(file) {
       req(stats_result())
       write.csv(stats_result(), file, row.names = FALSE)
     }
   )
 
   output$dl_methods <- downloadHandler(
-    filename = function() paste0("qpcr_methods_", Sys.Date(), ".txt"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_methods_", Sys.Date(), ".txt"),
+    contentType = "text/plain",
+    content     = function(file) {
       req(methods_txt())
       writeLines(methods_txt(), file)
     }
@@ -636,35 +646,39 @@ server <- function(input, output, session) {
                   backgroundColor = styleEqual("Yes", "#d4edda"))
   })
 
+  rm_download_dims <- function() {
+    n    <- length(unique(rm_analyzed()$Gene))
+    ncol <- max(1, as.integer(input$facet_ncol %||% 3))
+    nrow <- ceiling(n / ncol)
+    list(w = 5 * ncol, h = 5 * nrow)
+  }
+
   output$rm_dl_png <- downloadHandler(
-    filename = function() paste0("qpcr_rm_plot_", Sys.Date(), ".png"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".png"),
+    contentType = "image/png",
+    content     = function(file) {
       req(rm_valid()$ok)
-      n    <- length(unique(rm_analyzed()$Gene))
-      ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-      nrow <- ceiling(n / ncol)
-      png(file, width = 1800 * ncol, height = 1800 * nrow, res = 600)
-      on.exit(dev.off(), add = TRUE)
-      print(render_rm_plot())
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+             dpi = 300, device = "png", bg = "white")
     }
   )
 
   output$rm_dl_pdf <- downloadHandler(
-    filename = function() paste0("qpcr_rm_plot_", Sys.Date(), ".pdf"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".pdf"),
+    contentType = "application/pdf",
+    content     = function(file) {
       req(rm_valid()$ok)
-      n    <- length(unique(rm_analyzed()$Gene))
-      ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-      nrow <- ceiling(n / ncol)
-      pdf(file, width = 4.5 * ncol, height = 4.5 * nrow)
-      on.exit(dev.off(), add = TRUE)
-      print(render_rm_plot())
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+             device = "pdf", bg = "white")
     }
   )
 
   output$rm_dl_csv <- downloadHandler(
-    filename = function() paste0("qpcr_rm_stats_", Sys.Date(), ".csv"),
-    content  = function(file) {
+    filename    = function() paste0("qpcr_rm_stats_", Sys.Date(), ".csv"),
+    contentType = "text/csv",
+    content     = function(file) {
       req(rm_stats())
       write.csv(rm_stats(), file, row.names = FALSE)
     }
