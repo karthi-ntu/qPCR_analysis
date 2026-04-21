@@ -5,14 +5,23 @@ compute_delta_ct <- function(df) {
   df
 }
 
-compute_fold_change <- function(df, control_group) {
+compute_fold_change <- function(df, control_group, control_subgroup = NULL) {
   if (!control_group %in% df$Group) {
     stop(sprintf("control_group '%s' not found in df$Group", control_group))
   }
+  use_sub <- !is.null(control_subgroup) &&
+             nzchar(control_subgroup) &&
+             "Subgroup" %in% names(df) &&
+             control_subgroup %in% df$Subgroup
   genes <- unique(df$Gene)
   result_list <- lapply(genes, function(gene) {
     sub <- df[df$Gene == gene, ]
-    control_mean <- mean(sub$delta_ct[sub$Group == control_group], na.rm = TRUE)
+    if (use_sub) {
+      idx <- sub$Group == control_group & sub$Subgroup == control_subgroup
+    } else {
+      idx <- sub$Group == control_group
+    }
+    control_mean <- mean(sub$delta_ct[idx], na.rm = TRUE)
     sub$delta_delta_ct    <- sub$delta_ct - control_mean
     sub$fold_change       <- 2^(-sub$delta_delta_ct)
     sub$log2_fold_change  <- log2(sub$fold_change)
@@ -282,10 +291,14 @@ generate_methods_text <- function(df, stats_df, test_type,
   tests_used <- unique(stats_df$Test)
   test_desc <- paste(tests_used, collapse = " / ")
 
+  baseline_phrase <- if (grepl(" | ", control_group, fixed = TRUE))
+    paste0("'", control_group, "' cell (Group | Subgroup combination)")
+  else
+    paste0("'", control_group, "' group")
   parts <- c(
     paste0("Relative gene expression was calculated using the \u0394\u0394Ct method ",
            "(Livak & Schmittgen, 2001), with 2^(-\u0394\u0394Ct) as fold change ",
-           "relative to the '", control_group, "' group."),
+           "relative to the ", baseline_phrase, "."),
     paste0("Data for ", length(genes), " gene(s) (",
            paste(genes, collapse = ", "),
            ") were analyzed (", n_txt, " biological replicates per group)."),

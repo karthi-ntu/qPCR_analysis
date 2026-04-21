@@ -81,6 +81,7 @@ to_wide_df <- function(long) {
 shared_sidebar <- function() {
   tagList(
     textInput("ctrl_group", "Control group name", value = "Control"),
+    uiOutput("ctrl_subgroup_ui"),
     radioButtons("test_type", "Statistical test",
                  choices = c("Parametric (t-test / ANOVA)" = "parametric",
                              "Non-parametric (Wilcoxon / Kruskal)" = "nonparametric"),
@@ -186,6 +187,13 @@ help_content <- function() {
       "plus ", strong("Tukey HSD"), " pairwise tests between all 4 interaction cells. ",
       "The plot x-axis shows the 4 combinations (", code("Young | Carrier"),
       ", ", code("Young | Thaps"), ", ...) and dots are colored by Subgroup."),
+    p(strong("Control subgroup (optional):"), " when a Subgroup column is detected, a ",
+      code("Control subgroup"), " selector appears below the Control group. ",
+      "Leave it at ", em("'(use Group mean - mix all subgroups)'"),
+      " to compute log\u2082 fold change against the mean of all samples in the control group. ",
+      "Pick a specific subgroup (e.g. ", code("Carrier"), ") to use ",
+      em("only the Young+Carrier cells"), " as the fold-change baseline \u2014 the biologically ",
+      "typical choice for Young/Aged \u00d7 vehicle/treatment designs."),
     h3("Expected input format \u2014 Repeated Measures tab"),
     p("Same header, but ", strong("each Sample name must appear in 2 or more Groups"), ":"),
     tags$pre(
@@ -372,6 +380,20 @@ server <- function(input, output, session) {
       rv$wide <- to_wide_df(parsed)
   })
 
+  # -- Control subgroup selector (only appears when Subgroup column present) --
+  output$ctrl_subgroup_ui <- renderUI({
+    if (!has_subgroup()) return(NULL)
+    subs <- unique(rv$wide$Subgroup)
+    subs <- subs[nzchar(subs)]
+    if (length(subs) == 0) return(NULL)
+    selectInput(
+      "ctrl_subgroup",
+      "Control subgroup (optional)",
+      choices = c("(use Group mean - mix all subgroups)" = "", subs),
+      selected = ""
+    )
+  })
+
   # -- Validation ------------------------------------------------------------
   validation_msg <- reactive({
     df <- long_data()
@@ -396,7 +418,8 @@ server <- function(input, output, session) {
   analyzed <- reactive({
     req(is.null(validation_msg()))
     df <- compute_delta_ct(long_data())
-    compute_fold_change(df, control_group = input$ctrl_group)
+    compute_fold_change(df, control_group = input$ctrl_group,
+                        control_subgroup = input$ctrl_subgroup)
   })
 
   stats_result <- reactive({
@@ -447,6 +470,17 @@ server <- function(input, output, session) {
     sub(prefix, "", sel[startsWith(sel, prefix)], fixed = TRUE)
   }
 
+  # Label used on the y-axis and in methods text: composite when a control
+  # subgroup is picked ("Young | Control"), otherwise just the group.
+  baseline_label <- reactive({
+    cs <- input$ctrl_subgroup
+    if (!is.null(cs) && nzchar(cs) && has_subgroup()) {
+      paste(input$ctrl_group, cs, sep = " | ")
+    } else {
+      input$ctrl_group
+    }
+  })
+
   # -- Plots (Tab 1) ---------------------------------------------------------
   output$plots_ui <- renderUI({
     req(genes_in_data())
@@ -469,7 +503,7 @@ server <- function(input, output, session) {
                        plot_type     = input$plot_type,
                        show_sig      = input$show_sig,
                        sig_comparisons_all = input$visible_comps,
-                       control_group = input$ctrl_group,
+                       control_group = baseline_label(),
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
@@ -489,7 +523,7 @@ server <- function(input, output, session) {
                        plot_type     = input$plot_type,
                        show_sig      = input$show_sig,
                        sig_comparisons = visible_comps_for_gene(g),
-                       control_group = input$ctrl_group,
+                       control_group = baseline_label(),
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        has_subgroup  = has_subgroup(),
@@ -515,7 +549,7 @@ server <- function(input, output, session) {
     generate_methods_text(
       df = analyzed(), stats_df = stats_result(),
       test_type = input$test_type, paired = input$paired,
-      control_group = input$ctrl_group, has_subgroup = has_subgroup()
+      control_group = baseline_label(), has_subgroup = has_subgroup()
     )
   })
 
@@ -529,7 +563,7 @@ server <- function(input, output, session) {
                    plot_type     = input$plot_type,
                    show_sig      = input$show_sig,
                    sig_comparisons = visible_comps_for_gene(g),
-                   control_group = input$ctrl_group,
+                   control_group = baseline_label(),
                    rotate_x      = input$rotate_x,
                    aspect_ratio  = input$aspect_ratio,
                    has_subgroup  = has_subgroup(),
@@ -543,7 +577,7 @@ server <- function(input, output, session) {
                        plot_type     = input$plot_type,
                        show_sig      = input$show_sig,
                        sig_comparisons_all = input$visible_comps,
-                       control_group = input$ctrl_group,
+                       control_group = baseline_label(),
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
@@ -561,7 +595,7 @@ server <- function(input, output, session) {
                        plot_type           = input$plot_type,
                        show_sig            = input$show_sig,
                        sig_comparisons_all = input$visible_comps,
-                       control_group       = input$ctrl_group,
+                       control_group       = baseline_label(),
                        rotate_x            = input$rotate_x,
                        aspect_ratio        = input$aspect_ratio,
                        ncol = max(1, as.integer(input$facet_ncol %||% 3)),
@@ -641,7 +675,8 @@ server <- function(input, output, session) {
   rm_analyzed <- reactive({
     req(rm_valid()$ok)
     df <- compute_delta_ct(long_data())
-    compute_fold_change(df, control_group = input$ctrl_group)
+    compute_fold_change(df, control_group = input$ctrl_group,
+                        control_subgroup = input$ctrl_subgroup)
   })
 
   rm_stats <- reactive({
@@ -663,7 +698,7 @@ server <- function(input, output, session) {
                      error_type    = input$error_type,
                      show_sig      = input$show_sig,
                      sig_comparisons_all = input$visible_comps,
-                     control_group = input$ctrl_group,
+                     control_group = baseline_label(),
                      rotate_x      = input$rotate_x,
                      aspect_ratio  = input$aspect_ratio,
                      ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
