@@ -295,18 +295,22 @@ help_content <- function() {
       strong("Biological"), " is usually the right choice. Switch to ",
       strong("Technical"), " only when your paste contains 2-3 rows per sample."),
 
-    h3("Two-factor layout (Prism-style prompt)"),
-    p("When a ", code("Subgroup"), " column is detected, a blue panel appears at the top of the sidebar asking you to pick the plot layout \u2014 exactly like Prism's new-graph wizard:"),
-    tags$ul(
-      tags$li(strong("Grouped (Prism style)"), " \u2014 one factor on the x-axis, the other as ",
-              em("dodged colored clusters"), " within each x position. ",
-              "You then pick which factor drives the x-axis (e.g. Young/Aged) and the other ",
-              "becomes the color legend (e.g. Carrier/Thapsigargin). This is the layout most biology papers use."),
-      tags$li(strong("Combined"), " \u2014 the original layout: one merged x-axis with labels like ",
-              code("Young | Carrier"), ", ", code("Young | Thaps"), ", ",
-              code("Aged | Carrier"), ", ", code("Aged | Thaps"), ". Useful when you want every interaction cell to stand alone.")
+    h3("Two-factor layout (Prism grouped style)"),
+    p("When a ", code("Subgroup"), " column is detected, the plot uses the ",
+      strong("Prism grouped layout"), ": one factor drives the x-axis and the other ",
+      "appears as ", em("dodged colored clusters"), " within each x-axis cluster. ",
+      "The axis shows ", strong("nested labels"),
+      " \u2014 Subgroup names directly under each dot, Group names centered under each cluster. ",
+      "A blue panel appears at the top of the sidebar asking which factor drives the x-axis ",
+      "(like Prism's new-graph wizard). Example for Young/Aged \u00d7 Carrier/Thapsigargin ",
+      "with Group on x-axis:"),
+    tags$pre(
+      "     [•]  [•]      [•]  [•]            <- dots\n",
+      "  Carrier Thaps  Carrier Thaps         <- Subgroup labels\n",
+      "     Young          Aged               <- Group labels"
     ),
-    p("Significance brackets adapt automatically: in Grouped mode they span the correct dodged positions (e.g. within-cluster comparisons or across-cluster comparisons with the right stagger)."),
+    p("Significance brackets span the correct dodged positions (within-cluster, ",
+      "across-cluster same-subgroup, or diagonal comparisons)."),
 
     h3("Manuscript-ready export"),
     p("Expand the ", strong("Export size (for downloads)"), " panel in the sidebar to set exact figure dimensions in ", strong("millimeters"), " and choose ", strong("DPI"), " (for PNG/TIFF):"),
@@ -567,30 +571,20 @@ server <- function(input, output, session) {
   })
 
   # -- 2-factor plot layout question (Prism-wizard style) --------------------
-  # Only shown when a Subgroup column is detected. Mirrors Prism's behavior of
-  # asking the user explicitly which factor drives the x-axis and which is the
-  # grouping/dodge variable, instead of auto-collapsing them into one label.
+  # Only shown when a Subgroup column is detected. Lets the user pick which
+  # factor drives the x-axis and which is the dodged/colored grouping.
   output$layout_question_ui <- renderUI({
     if (!has_subgroup()) return(NULL)
     tagList(
       tags$div(style = "padding:6px 8px; margin:4px 0; background:#f4f8ff; border-left:3px solid #4a7bd4; border-radius:3px;",
         tags$b("Two-factor design detected."),
         tags$p(style = "font-size:12px; margin:4px 0 0 0;",
-               "How should the plot look? (Prism-style question — change anytime)")
+               "Prism-grouped layout is used: one factor on the x-axis, the other shown as dodged colored clusters with nested labels below.")
       ),
-      radioButtons("two_factor_layout",
-                   "Plot layout",
-                   choices = c(
-                     "Grouped (Prism style): one factor on x-axis, the other as dodged colored clusters" = "grouped",
-                     "Combined: single x-axis with 'Group | Subgroup' combined labels" = "combined"),
-                   selected = "grouped"),
-      conditionalPanel(
-        "input.two_factor_layout == 'grouped'",
-        radioButtons("x_axis_var", "Which factor on the x-axis?",
-                     choices = c("Group (e.g. Young / Aged)"           = "Group",
-                                 "Subgroup (e.g. Carrier / Thapsigargin)" = "Subgroup"),
-                     selected = "Group")
-      )
+      radioButtons("x_axis_var", "Which factor on the x-axis?",
+                   choices = c("Group (e.g. Young / Aged)"              = "Group",
+                               "Subgroup (e.g. Carrier / Thapsigargin)" = "Subgroup"),
+                   selected = "Group")
     )
   })
 

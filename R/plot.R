@@ -68,6 +68,42 @@ make_err_fun <- function(error_type) {
   }
 }
 
+# Builds nested-axis labels for the grouped (2-factor) layout: the inner
+# factor (subgroup, under each dot) and the outer factor (group, centered
+# under each dodge cluster). Returns a list of ggplot layers to add.
+# Uses y = -Inf with vjust/clip=off to place labels below the axis.
+nested_axis_labels <- function(x_levels, col_levels, dodge_w,
+                               text_sizes = DEFAULT_TEXT_SIZES,
+                               font_family = "") {
+  ts <- modifyList(DEFAULT_TEXT_SIZES, as.list(text_sizes))
+  n_col <- length(col_levels)
+  # Inner: one label per (outer, inner) cell at the dodged x position.
+  inner_df <- do.call(rbind, lapply(seq_along(x_levels), function(i) {
+    data.frame(
+      x     = i + (seq_along(col_levels) - (n_col + 1) / 2) * (dodge_w / n_col),
+      label = col_levels,
+      stringsAsFactors = FALSE
+    )
+  }))
+  # Outer: one label per outer group, centered under the cluster.
+  outer_df <- data.frame(x = seq_along(x_levels),
+                         label = x_levels,
+                         stringsAsFactors = FALSE)
+  fam <- if (nzchar(font_family)) font_family else ""
+  list(
+    geom_text(data = inner_df,
+              aes(x = x, label = label), y = -Inf,
+              vjust = 2.3, size = ts$axis_text / .pt * 0.95,
+              fontface = "bold", family = fam,
+              inherit.aes = FALSE),
+    geom_text(data = outer_df,
+              aes(x = x, label = label), y = -Inf,
+              vjust = 4.8, size = ts$axis_text / .pt * 1.15,
+              fontface = "bold", family = fam,
+              inherit.aes = FALSE)
+  )
+}
+
 prism_theme <- function(rotate_x    = FALSE,
                         text_sizes  = DEFAULT_TEXT_SIZES,
                         font_family = "") {
@@ -113,20 +149,18 @@ make_barplot <- function(full_df, stats_df, gene,
                          text_sizes    = DEFAULT_TEXT_SIZES,
                          font_family   = "",
                          sig_format    = "exact",
-                         two_factor_layout = "combined",
-                         x_axis_var        = "Group") {
+                         x_axis_var    = "Group") {
   sub <- full_df[full_df$Gene == gene, ]
   sub$Group <- factor(sub$Group, levels = unique(sub$Group))
   err_fun  <- make_err_fun(error_type)
 
   use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(sub) &&
              length(unique(sub$Subgroup)) >= 2
-  grouped_layout <- use_sub && identical(two_factor_layout, "grouped")
-
   if (use_sub) sub$Subgroup <- factor(sub$Subgroup, levels = unique(sub$Subgroup))
 
-  if (grouped_layout) {
-    # Prism 'Grouped' style: one factor on x-axis, the other dodged/colored.
+  dodge_w <- 0.75
+  if (use_sub) {
+    # Grouped (Prism) layout with nested axis labels.
     if (identical(x_axis_var, "Subgroup")) {
       x_fac <- sub$Subgroup; col_fac <- sub$Group
       x_name <- "Subgroup";  col_name <- "Group"
@@ -134,14 +168,9 @@ make_barplot <- function(full_df, stats_df, gene,
       x_fac <- sub$Group;    col_fac <- sub$Subgroup
       x_name <- "Group";     col_name <- "Subgroup"
     }
-    sub$XVar   <- x_fac
-    sub$ColVar <- col_fac
-    n_fills  <- nlevels(col_fac)
-    dodge_w  <- 0.75
-    pd       <- position_dodge(width = dodge_w)
-    pj       <- position_jitterdodge(jitter.width = 0.12,
-                                     dodge.width  = dodge_w,
-                                     seed = 1)
+    sub$XVar <- x_fac; sub$ColVar <- col_fac
+    pd <- position_dodge(width = dodge_w)
+    pj <- position_jitterdodge(jitter.width = 0.12, dodge.width = dodge_w, seed = 1)
     p <- ggplot(sub, aes(x = XVar, y = log2_fold_change, fill = ColVar)) +
       geom_hline(yintercept = 0, linetype = "dotted",
                  linewidth = 0.8, color = "gray40")
@@ -169,38 +198,8 @@ make_barplot <- function(full_df, stats_df, gene,
     }
     fill_levels <- levels(col_fac)
     fill_values <- resolve_fill(fill_override, fill_levels)
-  } else if (use_sub) {
-    # Combined layout: "Group | Subgroup" as single x labels.
-    sub$XCell <- interaction(sub$Group, sub$Subgroup,
-                             sep = " | ", drop = TRUE, lex.order = FALSE)
-    n_fills <- nlevels(sub$Subgroup)
-    p <- ggplot(sub, aes(x = XCell, y = log2_fold_change, fill = Subgroup)) +
-      geom_hline(yintercept = 0, linetype = "dotted",
-                 linewidth = 0.8, color = "gray40")
-    rotate_x <- TRUE
-    if (plot_type == "column") {
-      p <- p +
-        stat_summary(fun = mean, geom = "col", color = "black",
-                     linewidth = 0.6, width = 0.65, alpha = 0.85) +
-        stat_summary(fun.data = err_fun, geom = "errorbar",
-                     width = 0.25, linewidth = 0.8, color = "black") +
-        geom_jitter(shape = 21, color = "black", stroke = 0.5,
-                    size = 3, width = 0.12, alpha = 0.95)
-    } else {
-      p <- p +
-        stat_summary(fun.data = err_fun, geom = "errorbar",
-                     width = 0.25, linewidth = 0.8, color = "black") +
-        stat_summary(fun = mean, geom = "errorbar",
-                     fun.min = mean, fun.max = mean,
-                     width = 0.4, linewidth = 1.2, color = "black") +
-        geom_jitter(shape = 21, color = "black", stroke = 0.5,
-                    size = 3, width = 0.12, alpha = 0.95)
-    }
-    fill_levels <- levels(sub$Subgroup)
-    fill_values <- resolve_fill(fill_override, fill_levels)
   } else {
     # Single-factor (no subgroup)
-    n_fills <- nlevels(sub$Group)
     p <- ggplot(sub, aes(x = Group, y = log2_fold_change, fill = Group)) +
       geom_hline(yintercept = 0, linetype = "dotted",
                  linewidth = 0.8, color = "gray40")
@@ -226,7 +225,7 @@ make_barplot <- function(full_df, stats_df, gene,
     fill_values <- resolve_fill(fill_override, fill_levels)
   }
 
-  fill_label <- if (grouped_layout) col_name else if (use_sub) "Subgroup" else NULL
+  fill_label <- if (use_sub) col_name else NULL
 
   p <- p +
     scale_fill_manual(values = fill_values) +
@@ -242,13 +241,26 @@ make_barplot <- function(full_df, stats_df, gene,
     theme(aspect.ratio = aspect_ratio)
 
   if (use_sub) {
-    p <- p + theme(legend.position = "top",
-                   legend.title    = element_text(face = "bold"))
+    # Add nested Group + Subgroup axis labels below the axis line, hide the
+    # default axis text, and make room with an expanded bottom margin.
+    p <- p +
+      nested_axis_labels(levels(x_fac), levels(col_fac), dodge_w,
+                         text_sizes = text_sizes, font_family = font_family) +
+      theme(
+        legend.position = "top",
+        legend.title    = element_text(face = "bold"),
+        axis.text.x     = element_blank(),
+        axis.ticks.x    = element_blank(),
+        plot.margin     = margin(5.5, 5.5, 28, 5.5)
+      )
   }
 
-  if (!is.null(y_min) || !is.null(y_max))
-    p <- p + coord_cartesian(ylim = c(if (is.null(y_min)) NA else y_min,
-                                       if (is.null(y_max)) NA else y_max))
+  # Combine ylim + clip=off into one coord_cartesian (required by ggplot2).
+  p <- p + coord_cartesian(
+    ylim = c(if (is.null(y_min)) NA else y_min,
+             if (is.null(y_max)) NA else y_max),
+    clip = "off"
+  )
 
   if (isTRUE(show_sig)) {
     sig <- stats_df[stats_df$Gene == gene & stats_df$Significant == "Yes", ]
@@ -260,18 +272,16 @@ make_barplot <- function(full_df, stats_df, gene,
       sig_size <- as.numeric(modifyList(DEFAULT_TEXT_SIZES,
                                         as.list(text_sizes))$sig_bar)
 
-      if (grouped_layout) {
+      if (use_sub) {
         # Compute numeric x positions for the dodged layout.
         x_levels   <- levels(x_fac)
         col_levels <- levels(col_fac)
         n_col <- length(col_levels)
-        # Position of each (x, col) cell center on the continuous axis.
         cell_pos <- function(x_lab, col_lab) {
           xi <- match(x_lab, x_levels)
           ci <- match(col_lab, col_levels)
           xi + (ci - (n_col + 1) / 2) * (dodge_w / n_col)
         }
-        # Each Comparison is "Group | Subgroup vs Group | Subgroup".
         parse_cell <- function(s) {
           bits <- trimws(strsplit(s, "|", fixed = TRUE)[[1]])
           list(Group = bits[1], Subgroup = bits[2])
@@ -367,21 +377,18 @@ make_combined_plot <- function(full_df, stats_df,
                                text_sizes    = DEFAULT_TEXT_SIZES,
                                font_family   = "",
                                sig_format    = "exact",
-                               two_factor_layout = "combined",
-                               x_axis_var        = "Group") {
+                               x_axis_var    = "Group") {
   full_df$Gene  <- factor(full_df$Gene,  levels = unique(full_df$Gene))
   full_df$Group <- factor(full_df$Group, levels = unique(full_df$Group))
   err_fun  <- make_err_fun(error_type)
 
   use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(full_df) &&
              length(unique(full_df$Subgroup)) >= 2
-  grouped_layout <- use_sub && identical(two_factor_layout, "grouped")
-
   if (use_sub) full_df$Subgroup <- factor(full_df$Subgroup,
                                           levels = unique(full_df$Subgroup))
 
   dodge_w <- 0.75
-  if (grouped_layout) {
+  if (use_sub) {
     if (identical(x_axis_var, "Subgroup")) {
       full_df$XVar   <- full_df$Subgroup; full_df$ColVar <- full_df$Group
       x_levels   <- levels(full_df$Subgroup); col_levels <- levels(full_df$Group)
@@ -393,12 +400,6 @@ make_combined_plot <- function(full_df, stats_df,
     }
     n_fills <- length(col_levels)
     p <- ggplot(full_df, aes(x = XVar, y = log2_fold_change, fill = ColVar))
-  } else if (use_sub) {
-    full_df$XCell <- interaction(full_df$Group, full_df$Subgroup,
-                                 sep = " | ", drop = TRUE, lex.order = FALSE)
-    n_fills <- nlevels(full_df$Subgroup)
-    p <- ggplot(full_df, aes(x = XCell, y = log2_fold_change, fill = Subgroup))
-    rotate_x <- TRUE
   } else {
     n_fills <- nlevels(full_df$Group)
     p <- ggplot(full_df, aes(x = Group, y = log2_fold_change, fill = Group))
@@ -406,7 +407,7 @@ make_combined_plot <- function(full_df, stats_df,
   p <- p +
     geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.8, color = "gray40")
 
-  if (grouped_layout) {
+  if (use_sub) {
     pd <- position_dodge(width = dodge_w)
     pj <- position_jitterdodge(jitter.width = 0.12, dodge.width = dodge_w, seed = 1)
     if (plot_type == "column") {
@@ -450,13 +451,11 @@ make_combined_plot <- function(full_df, stats_df,
                   size = 2.5, width = 0.12, alpha = 0.95)
   }
 
-  fill_levels <- if (grouped_layout) col_levels
-                 else if (use_sub) levels(full_df$Subgroup)
+  fill_levels <- if (use_sub) col_levels
                  else levels(full_df$Group)
   fill_values <- resolve_fill(fill_override, fill_levels)
 
-  fill_label <- if (grouped_layout) col_name
-                else if (use_sub) "Subgroup" else NULL
+  fill_label <- if (use_sub) col_name else NULL
 
   p <- p +
     scale_fill_manual(values = fill_values) +
@@ -472,13 +471,24 @@ make_combined_plot <- function(full_df, stats_df,
     theme(aspect.ratio = aspect_ratio)
 
   if (use_sub) {
-    p <- p + theme(legend.position = "top",
-                   legend.title    = element_text(face = "bold"))
+    p <- p +
+      nested_axis_labels(x_levels, col_levels, dodge_w,
+                         text_sizes = text_sizes, font_family = font_family) +
+      theme(
+        legend.position = "top",
+        legend.title    = element_text(face = "bold"),
+        axis.text.x     = element_blank(),
+        axis.ticks.x    = element_blank(),
+        plot.margin     = margin(5.5, 5.5, 28, 5.5)
+      )
   }
 
-  if (!is.null(y_min) || !is.null(y_max))
-    p <- p + coord_cartesian(ylim = c(if (is.null(y_min)) NA else y_min,
-                                       if (is.null(y_max)) NA else y_max))
+  # Combine ylim + clip="off" in one coord_cartesian call.
+  p <- p + coord_cartesian(
+    ylim = c(if (is.null(y_min)) NA else y_min,
+             if (is.null(y_max)) NA else y_max),
+    clip = "off"
+  )
 
   # Per-facet significance bars using manual positioning
   if (isTRUE(show_sig) && !is.null(stats_df) && nrow(stats_df) > 0) {
@@ -490,7 +500,7 @@ make_combined_plot <- function(full_df, stats_df,
     }
     if (nrow(sig) > 0) {
       sig_fmt <- pick_sig_formatter(sig_format)
-      if (grouped_layout) {
+      if (use_sub) {
         n_col <- length(col_levels)
         cell_pos <- function(x_lab, col_lab) {
           xi <- match(x_lab, x_levels); ci <- match(col_lab, col_levels)
