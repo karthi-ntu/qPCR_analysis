@@ -3,10 +3,6 @@ library(ggplot2)
 library(DT)
 library(ggsignif)
 library(bslib)
-# plotly is optional — used only for the "Interactive" plot toggle. Loads fine
-# in Shinylive but adds ~1.5MB to the initial bundle.
-has_plotly <- requireNamespace("plotly", quietly = TRUE)
-if (has_plotly) library(plotly)
 
 # Shinylive workaround: strip `download` attribute from downloadButton, otherwise
 # Chromium browsers save the file as .htm/.xml in WebAssembly.
@@ -176,8 +172,8 @@ data_status_badge_html <- function(wide, has_sub) {
 
 # Sidebar tooltip helper: defaults placement to "top" so tooltips stay
 # inside the sidebar column and never overlap the main panel content.
-sidebar_tip <- function(trigger, msg) {
-  sidebar_tip(trigger, msg, placement = "top")
+sidebar_tip <- function(trigger, msg, placement = "top", ...) {
+  bslib::tooltip(trigger, msg, placement = placement, ...)
 }
 
 # --- Sidebar (shared controls) ---------------------------------------------
@@ -323,15 +319,7 @@ shared_sidebar <- function() {
           column(6, numericInput("y_min", "Y-axis min", value = NA, step = 0.5)),
           column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
         ),
-        uiOutput("hide_comps_ui"),
-        if (has_plotly)
-          sidebar_tip(
-            checkboxInput("interactive_plot",
-                          tagList(icon("wand-magic-sparkles"),
-                                  " Interactive plot (hover tooltips)"),
-                          value = FALSE),
-            "Renders with plotly \u2014 hover over dots to see exact log\u2082 FC values. Downloads still use static ggplot."
-          )
+        uiOutput("hide_comps_ui")
       ),
 
       # --- Step 5: Styling ----------------------------------------------------
@@ -1106,24 +1094,19 @@ server <- function(input, output, session) {
   # -- Plots (Tab 1) ---------------------------------------------------------
   output$plots_ui <- renderUI({
     req(genes_in_data())
-    # Swap to plotly outputs when the "Interactive" toggle is on.
-    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
-    plot_out <- if (use_plotly) plotly::plotlyOutput else plotOutput
     if (identical(input$plot_layout, "combined")) {
       n      <- length(genes_in_data())
       ncol   <- max(1, as.integer(input$facet_ncol %||% 3))
       nrow   <- ceiling(n / ncol)
       height <- paste0(max(350, 350 * nrow), "px")
-      plot_out("plot_combined", height = height)
+      plotOutput("plot_combined", height = height)
     } else {
       do.call(tagList, lapply(genes_in_data(), function(gene)
-        plot_out(paste0("plot_", make.names(gene)), height = "450px")))
+        plotOutput(paste0("plot_", make.names(gene)), height = "450px")))
     }
   })
 
-  # Build the combined ggplot as a reactive so both static and interactive
-  # renderers can share it.
-  combined_plot_obj <- reactive({
+  output$plot_combined <- renderPlot({
     req(genes_in_data())
     make_combined_plot(analyzed(), stats_result(),
                        error_type    = input$error_type,
@@ -1144,50 +1127,12 @@ server <- function(input, output, session) {
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   })
 
-  # Register combined plot output as either static or interactive based on
-  # the user's toggle. Re-registered whenever the toggle flips.
-  observe({
-    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
-    if (use_plotly) {
-      output$plot_combined <- plotly::renderPlotly({
-        plotly::ggplotly(combined_plot_obj(),
-                         tooltip = c("fill", "y"))
-      })
-    } else {
-      output$plot_combined <- renderPlot({ combined_plot_obj() })
-    }
-  })
-
   observe({
     req(genes_in_data())
-    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
     lapply(genes_in_data(), function(gene) {
       local({
         g <- gene
-        out_id <- paste0("plot_", make.names(g))
-        if (use_plotly) {
-          output[[out_id]] <- plotly::renderPlotly({
-            plotly::ggplotly(make_barplot(
-              analyzed(), stats_result(), gene = g,
-              error_type    = input$error_type,
-              plot_type     = input$plot_type,
-              show_sig      = input$show_sig,
-              sig_comparisons = visible_comps_for_gene(g),
-              control_group = baseline_label(),
-              rotate_x      = input$rotate_x,
-              aspect_ratio  = input$aspect_ratio,
-              has_subgroup  = has_subgroup(),
-              fill_override = color_override(),
-              text_sizes    = text_sizes(),
-              font_family   = input$font_family %||% "",
-              sig_format    = input$sig_format %||% "exact",
-              x_axis_var    = input$x_axis_var %||% "Group",
-              y_min = if (is.na(input$y_min)) NULL else input$y_min,
-              y_max = if (is.na(input$y_max)) NULL else input$y_max
-            ), tooltip = c("fill", "y"))
-          })
-        } else {
-        output[[out_id]] <- renderPlot({
+        output[[paste0("plot_", make.names(g))]] <- renderPlot({
           make_barplot(analyzed(), stats_result(), gene = g,
                        error_type    = input$error_type,
                        plot_type     = input$plot_type,
@@ -1201,11 +1146,10 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
-                       x_axis_var        = input$x_axis_var        %||% "Group",
+                       x_axis_var    = input$x_axis_var %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
-        }  # close else (static render branch)
       })
     })
   })
