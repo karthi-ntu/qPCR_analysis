@@ -72,11 +72,21 @@ make_err_fun <- function(error_type) {
 # factor (subgroup, under each dot) and the outer factor (group, centered
 # under each dodge cluster). Returns a list of ggplot layers to add.
 # Uses y = -Inf with vjust/clip=off to place labels below the axis.
+#
+# Note: for this to render, the caller MUST set
+#   theme(plot.margin = margin(..., bottom = >= 60 pt))
+# and use coord_cartesian(clip = "off"). The helper also returns the
+# minimum bottom margin needed so callers can query it via attr().
 nested_axis_labels <- function(x_levels, col_levels, dodge_w,
                                text_sizes = DEFAULT_TEXT_SIZES,
                                font_family = "") {
   ts <- modifyList(DEFAULT_TEXT_SIZES, as.list(text_sizes))
   n_col <- length(col_levels)
+  inner_size <- ts$axis_text * 0.82           # pt — smaller to avoid overlap
+  outer_size <- ts$axis_text * 1.15           # pt
+  # vjust is in units of text height; position labels just below the axis.
+  inner_vjust <- 1.8
+  outer_vjust <- 4.0
   # Inner: one label per (outer, inner) cell at the dodged x position.
   inner_df <- do.call(rbind, lapply(seq_along(x_levels), function(i) {
     data.frame(
@@ -85,23 +95,27 @@ nested_axis_labels <- function(x_levels, col_levels, dodge_w,
       stringsAsFactors = FALSE
     )
   }))
-  # Outer: one label per outer group, centered under the cluster.
   outer_df <- data.frame(x = seq_along(x_levels),
                          label = x_levels,
                          stringsAsFactors = FALSE)
   fam <- if (nzchar(font_family)) font_family else ""
-  list(
+  layers <- list(
     geom_text(data = inner_df,
               aes(x = x, label = label), y = -Inf,
-              vjust = 2.3, size = ts$axis_text / .pt * 0.95,
+              vjust = inner_vjust, size = inner_size / .pt,
               fontface = "bold", family = fam,
               inherit.aes = FALSE),
     geom_text(data = outer_df,
               aes(x = x, label = label), y = -Inf,
-              vjust = 4.8, size = ts$axis_text / .pt * 1.15,
+              vjust = outer_vjust, size = outer_size / .pt,
               fontface = "bold", family = fam,
               inherit.aes = FALSE)
   )
+  # Tell the caller the bottom margin required to avoid clipping.
+  # outer_vjust text-heights below the axis, scaled by text size + safety.
+  needed_bottom_pt <- ceiling(outer_vjust * outer_size + 8)
+  attr(layers, "bottom_margin_pt") <- needed_bottom_pt
+  layers
 }
 
 prism_theme <- function(rotate_x    = FALSE,
@@ -158,7 +172,7 @@ make_barplot <- function(full_df, stats_df, gene,
              length(unique(sub$Subgroup)) >= 2
   if (use_sub) sub$Subgroup <- factor(sub$Subgroup, levels = unique(sub$Subgroup))
 
-  dodge_w <- 0.75
+  dodge_w <- 0.85
   if (use_sub) {
     # Grouped (Prism) layout with nested axis labels.
     if (identical(x_axis_var, "Subgroup")) {
@@ -242,17 +256,18 @@ make_barplot <- function(full_df, stats_df, gene,
 
   if (use_sub) {
     # Add nested Group + Subgroup axis labels below the axis line, hide the
-    # default axis text, and make room with an expanded bottom margin.
-    p <- p +
-      nested_axis_labels(levels(x_fac), levels(col_fac), dodge_w,
-                         text_sizes = text_sizes, font_family = font_family) +
-      theme(
-        legend.position = "top",
-        legend.title    = element_text(face = "bold"),
-        axis.text.x     = element_blank(),
-        axis.ticks.x    = element_blank(),
-        plot.margin     = margin(5.5, 5.5, 28, 5.5)
-      )
+    # default axis text, and make room with an expanded bottom margin sized
+    # to actually fit both rows (clipping bug fix).
+    nal <- nested_axis_labels(levels(x_fac), levels(col_fac), dodge_w,
+                              text_sizes = text_sizes, font_family = font_family)
+    p <- p + nal + theme(
+      legend.position = "top",
+      legend.title    = element_text(face = "bold"),
+      axis.text.x     = element_blank(),
+      axis.ticks.x    = element_blank(),
+      plot.margin     = margin(5.5, 5.5,
+                               attr(nal, "bottom_margin_pt"), 5.5)
+    )
   }
 
   # Combine ylim + clip=off into one coord_cartesian (required by ggplot2).
@@ -387,7 +402,7 @@ make_combined_plot <- function(full_df, stats_df,
   if (use_sub) full_df$Subgroup <- factor(full_df$Subgroup,
                                           levels = unique(full_df$Subgroup))
 
-  dodge_w <- 0.75
+  dodge_w <- 0.85
   if (use_sub) {
     if (identical(x_axis_var, "Subgroup")) {
       full_df$XVar   <- full_df$Subgroup; full_df$ColVar <- full_df$Group
@@ -471,16 +486,16 @@ make_combined_plot <- function(full_df, stats_df,
     theme(aspect.ratio = aspect_ratio)
 
   if (use_sub) {
-    p <- p +
-      nested_axis_labels(x_levels, col_levels, dodge_w,
-                         text_sizes = text_sizes, font_family = font_family) +
-      theme(
-        legend.position = "top",
-        legend.title    = element_text(face = "bold"),
-        axis.text.x     = element_blank(),
-        axis.ticks.x    = element_blank(),
-        plot.margin     = margin(5.5, 5.5, 28, 5.5)
-      )
+    nal <- nested_axis_labels(x_levels, col_levels, dodge_w,
+                              text_sizes = text_sizes, font_family = font_family)
+    p <- p + nal + theme(
+      legend.position = "top",
+      legend.title    = element_text(face = "bold"),
+      axis.text.x     = element_blank(),
+      axis.ticks.x    = element_blank(),
+      plot.margin     = margin(5.5, 5.5,
+                               attr(nal, "bottom_margin_pt"), 5.5)
+    )
   }
 
   # Combine ylim + clip="off" in one coord_cartesian call.

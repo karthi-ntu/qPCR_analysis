@@ -2,6 +2,11 @@ library(shiny)
 library(ggplot2)
 library(DT)
 library(ggsignif)
+library(bslib)
+# plotly is optional — used only for the "Interactive" plot toggle. Loads fine
+# in Shinylive but adds ~1.5MB to the initial bundle.
+has_plotly <- requireNamespace("plotly", quietly = TRUE)
+if (has_plotly) library(plotly)
 
 # Shinylive workaround: strip `download` attribute from downloadButton, otherwise
 # Chromium browsers save the file as .htm/.xml in WebAssembly.
@@ -77,104 +82,111 @@ to_wide_df <- function(long) {
   wide
 }
 
+# --- Example data generators (for "Load example" buttons) ----------------
+example_data_1factor <- function() {
+  data.frame(
+    Sample       = as.character(1:8),
+    Group        = rep(c("Control", "Treated"), each = 4),
+    Ct_reference = c(13.5, 13.6, 13.4, 13.5, 13.5, 13.4, 13.6, 13.5),
+    HERPUD1      = c(25.1, 25.3, 25.2, 25.0, 22.1, 22.3, 22.0, 22.4),
+    ATF4         = c(24.5, 24.7, 24.6, 24.4, 21.8, 22.0, 21.9, 22.1),
+    stringsAsFactors = FALSE
+  )
+}
+
+example_data_2factor <- function() {
+  data.frame(
+    Sample       = as.character(1:12),
+    Group        = c(rep("Young", 6), rep("Aged", 6)),
+    Subgroup     = c(rep("Control", 3), rep("Thaps", 3),
+                     rep("Control", 3), rep("Thaps", 3)),
+    Ct_reference = c(13.50, 13.58, 13.42, 13.55, 13.62, 13.44,
+                     13.50, 13.46, 13.52, 13.48, 13.44, 13.36),
+    HERPUD1      = c(25.1, 25.3, 25.2, 22.1, 22.3, 22.0,
+                     24.8, 24.9, 24.7, 21.5, 21.6, 21.4),
+    stringsAsFactors = FALSE
+  )
+}
+
+# --- App-specific CSS -----------------------------------------------------
+# Visible paste dropzone + copy-button + data-summary-card styling. Scoped
+# via class names so the defaults don't leak into other Bootstrap elements.
+app_css <- "
+.paste-dropzone {
+  border: 2px dashed #00A8A8;
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(0, 168, 168, 0.05);
+  text-align: center;
+  margin-bottom: 10px;
+  transition: background 0.2s;
+}
+.paste-dropzone:hover { background: rgba(0, 168, 168, 0.12); }
+.paste-dropzone .pz-title { font-weight: 600; color: #007373; margin-bottom: 4px; }
+.paste-dropzone .pz-sub   { font-size: 12px; color: #666; }
+.data-summary {
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 8px 0 12px;
+  font-size: 13px;
+  background: rgba(0, 168, 168, 0.08);
+  border-left: 3px solid #00A8A8;
+}
+.data-summary.warn {
+  background: rgba(217, 119, 6, 0.08);
+  border-left-color: #d97706;
+}
+.data-summary.empty {
+  background: rgba(120, 120, 120, 0.08);
+  border-left-color: #aaa;
+  color: #777;
+}
+.data-badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(0, 168, 168, 0.15); color: #007373;
+  margin-right: 10px;
+}
+.data-badge.empty { background: rgba(120,120,120,0.12); color: #777; }
+.data-badge.warn  { background: rgba(217, 119, 6, 0.15); color: #b45309; }
+.methods-copy-wrap { position: relative; }
+.methods-copy-btn {
+  position: absolute; top: 6px; right: 6px; z-index: 5;
+  font-size: 11px; padding: 2px 8px;
+}
+.plot-card .card-header {
+  font-size: 13px; color: #555; padding: 6px 12px;
+  background: transparent; border-bottom: 1px solid #eee;
+}
+"
+
+# Small helper: generate the navbar data-status badge from reactive state.
+data_status_badge_html <- function(wide, has_sub) {
+  if (nrow(wide) == 0)
+    return(span(class = "data-badge empty", icon("circle"), " no data"))
+  n_samples <- nrow(wide)
+  gene_cols <- setdiff(names(wide), c("Sample", "Group", "Subgroup", "Ct_reference"))
+  n_genes   <- length(gene_cols)
+  n_groups  <- length(unique(wide$Group[nzchar(wide$Group)]))
+  txt <- paste(n_samples, "samples \u00b7",
+               n_genes, if (n_genes == 1) "gene" else "genes", "\u00b7",
+               n_groups, "groups")
+  if (has_sub) txt <- paste(txt, "\u00b7 2-factor")
+  span(class = "data-badge", icon("check-circle"), " ", txt)
+}
+
+# Sidebar tooltip helper: defaults placement to "top" so tooltips stay
+# inside the sidebar column and never overlap the main panel content.
+sidebar_tip <- function(trigger, msg) {
+  sidebar_tip(trigger, msg, placement = "top")
+}
+
 # --- Sidebar (shared controls) ---------------------------------------------
+# Reorganized into 6 numbered accordion sections. Section 1 (Data) is open
+# by default; others are collapsed until needed. All input IDs preserved
+# unchanged so server logic does not need to be touched.
 shared_sidebar <- function() {
   tagList(
-    textInput("ctrl_group", "Control group name", value = "Control"),
-    uiOutput("ctrl_subgroup_ui"),
-    radioButtons("rep_mode", "Replicate type",
-                 choices = c("Biological replicates (one row per sample)" = "biological",
-                             "Technical replicates (average rows sharing Sample ID)" = "technical"),
-                 selected = "biological"),
-    uiOutput("layout_question_ui"),
-    radioButtons("test_type", "Statistical test",
-                 choices = c("Parametric (t-test / ANOVA)"              = "parametric",
-                             "Non-parametric (Wilcoxon / Kruskal)"      = "nonparametric",
-                             "Dunnett-style: vs control only (Holm)"    = "parametric_vs_control",
-                             "Mann-Whitney vs control only (Holm)"      = "nonparametric_vs_control"),
-                 selected = "parametric"),
-    radioButtons("plot_type", "Plot type",
-                 choices = c("Scatter + error bars" = "scatter",
-                             "Column + dots" = "column"),
-                 inline = TRUE),
-    radioButtons("plot_layout", "Plot layout",
-                 choices = c("Individual" = "individual",
-                             "Combined grid" = "combined"),
-                 selected = "individual"),
-    conditionalPanel(
-      "input.plot_layout == 'combined'",
-      numericInput("facet_ncol", "Columns in grid",
-                   value = 3, min = 1, max = 6, step = 1)
-    ),
-    radioButtons("error_type", "Error bars",
-                 choices = c("SD" = "SD", "SEM" = "SEM", "95% CI" = "CI95"),
-                 inline = TRUE),
-    radioButtons("sig_format", "P-value display",
-                 choices = c("Exact (p = 0.0123)" = "exact",
-                             "Stars (*, **, ***, ****)" = "stars"),
-                 selected = "exact"),
-    checkboxInput("paired", "Paired samples (2 groups only)", value = FALSE),
-    checkboxInput("show_sig", "Show significance bars", value = TRUE),
-    checkboxInput("rotate_x", "Rotate x-axis labels 45\u00b0", value = FALSE),
-    sliderInput("aspect_ratio", "Plot aspect ratio (height/width)",
-                min = 0.5, max = 2.5, value = 1.0, step = 0.1),
-    fluidRow(
-      column(6, numericInput("y_min", "Y-axis min", value = NA, step = 0.5)),
-      column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
-    ),
-    uiOutput("hide_comps_ui"),
-    # --- Export dimensions (for PNG/PDF/SVG/TIFF downloads) -----------------
-    tags$details(
-      tags$summary(strong("Export size (for downloads)")),
-      div(style = "padding:6px 2px;",
-          p(style = "font-size:11px; color:#666; margin-bottom:4px;",
-            "Exact dimensions for manuscript figures. Common widths: ",
-            strong("85 mm"), " (single column), ", strong("174 mm"),
-            " (double column), ", strong("89/183 mm"), " (Nature)."),
-          fluidRow(
-            column(6, numericInput("export_w_mm", "Width (mm)",
-                                   value = 174, min = 30, max = 400, step = 1)),
-            column(6, numericInput("export_h_mm", "Height (mm)",
-                                   value = 120, min = 30, max = 400, step = 1))
-          ),
-          radioButtons("export_dpi", "DPI (PNG/TIFF)",
-                       choices = c("300" = 300, "600" = 600, "1200" = 1200),
-                       selected = 300, inline = TRUE),
-          p(style = "font-size:11px; color:#666;",
-            em("SVG and PDF are vector \u2014 DPI ignored."))
-      )
-    ),
-    # --- Plot styling panel (collapsible) -----------------------------------
-    tags$details(
-      tags$summary(strong("Plot styling (fonts, text size, colors)")),
-      div(style = "padding:6px 2px;",
-          selectInput("font_family", "Font family",
-                      choices = c("Default (sans)" = "",
-                                  "Serif"          = "serif",
-                                  "Mono"           = "mono",
-                                  "Arial"          = "Arial",
-                                  "Helvetica"      = "Helvetica",
-                                  "Times New Roman"= "Times New Roman",
-                                  "Courier New"    = "Courier New"),
-                      selected = ""),
-          sliderInput("ts_title",      "Plot title size",     6, 28, 18, 1),
-          sliderInput("ts_axis_title", "Axis title size",     6, 24, 14, 1),
-          sliderInput("ts_axis_text",  "Axis tick text size", 6, 22, 12, 1),
-          sliderInput("ts_legend",     "Legend text size",    6, 20, 12, 1),
-          sliderInput("ts_facet",      "Facet (gene) title size", 6, 24, 14, 1),
-          sliderInput("ts_sig_bar",    "Sig-bar text size",   2, 10, 3.5, 0.5),
-          uiOutput("color_picker_ui"),
-          actionButton("reset_colors", "Reset colors to Okabe-Ito",
-                       icon = icon("rotate-left"),
-                       style = "width:100%; margin-top:6px;")
-      )
-    ),
-    hr(),
-    h5("Data"),
-    p(style = "font-size:12px; color:#888;",
-      "Paste from Excel. Header: ",
-      strong("Sample | Group | [Subgroup] | Reference gene | Gene1 | Gene2 | ..."),
-      br(), em("Subgroup column is optional (triggers two-way ANOVA).")),
+    # Global paste listener — moved up so it runs on any page.
     tags$script(HTML("
       document.addEventListener('paste', function(e) {
         var tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
@@ -186,14 +198,191 @@ shared_sidebar <- function() {
         }
       });
     ")),
-    DTOutput("table"),
-    br(),
-    fluidRow(
-      column(6, actionButton("add_row",   "Add row",     icon = icon("plus"))),
-      column(6, actionButton("clear_tbl", "Clear table", icon = icon("trash")))
+
+    # Guided vs Expert mode: guided opens Step 1 only (auto-collapse others);
+    # expert opens all 6 steps so power users see everything at once.
+    sidebar_tip(
+      checkboxInput("guided_mode",
+                    tagList(icon("graduation-cap"),
+                            " Guided mode (walk through sections step by step)"),
+                    value = TRUE),
+      "Off = all sections open at once (expert view). On = start with Data only, expand others as you go."
     ),
-    hr(),
-    uiOutput("error_msg")
+
+    bslib::accordion(
+      id = "sidebar_accordion",
+      open = c("data"),  # only Step 1 open by default
+      multiple = TRUE,
+
+      # --- Step 1: Data -------------------------------------------------------
+      bslib::accordion_panel(
+        value = "data",
+        title = tagList(icon("database"), " 1. Data"),
+        div(class = "paste-dropzone",
+            div(class = "pz-title", icon("clipboard"), " Paste your Excel data here"),
+            div(class = "pz-sub",
+                "Press ", tags$kbd("Ctrl"), "+", tags$kbd("V"),
+                " anywhere on the page. Header: ",
+                code("Sample | Group | [Subgroup] | Ct_ref | Gene1 | ..."))
+        ),
+        fluidRow(
+          column(6, actionButton("load_ex_1factor",
+                                 "Load 1-factor example",
+                                 icon = icon("flask"),
+                                 style = "width:100%;")),
+          column(6, actionButton("load_ex_2factor",
+                                 "Load 2-factor example",
+                                 icon = icon("flask-vial"),
+                                 style = "width:100%;"))
+        ),
+        uiOutput("data_summary_ui"),
+        DTOutput("table"),
+        br(),
+        fluidRow(
+          column(6, actionButton("add_row",   "Add row",
+                                 icon = icon("plus"), style = "width:100%;")),
+          column(6, actionButton("clear_tbl", "Clear table",
+                                 icon = icon("trash"), style = "width:100%;"))
+        ),
+        uiOutput("error_msg")
+      ),
+
+      # --- Step 2: Experiment -------------------------------------------------
+      bslib::accordion_panel(
+        value = "experiment",
+        title = tagList(icon("vial"), " 2. Experiment"),
+        sidebar_tip(
+          uiOutput("ctrl_group_ui"),
+          "The group used as the reference for log\u2082 fold change. Choose from your pasted data."
+        ),
+        sidebar_tip(
+          uiOutput("ctrl_subgroup_ui"),
+          "Optional. Pin the baseline to a specific Group\u00d7Subgroup cell (e.g. Young+Control)."
+        ),
+        sidebar_tip(
+          radioButtons("rep_mode", "Replicate type",
+                       choices = c("Biological (one row per sample)" = "biological",
+                                   "Technical (average rows sharing Sample ID)" = "technical"),
+                       selected = "biological"),
+          "Biological: each row is a distinct sample. Technical: rows sharing Sample are averaged first (MIQE-compliant)."
+        ),
+        uiOutput("layout_question_ui")
+      ),
+
+      # --- Step 3: Statistics -------------------------------------------------
+      bslib::accordion_panel(
+        value = "stats",
+        title = tagList(icon("square-root-variable"), " 3. Statistics"),
+        sidebar_tip(
+          radioButtons("test_type", "Statistical test",
+                       choices = c("Parametric (t-test / ANOVA)"              = "parametric",
+                                   "Non-parametric (Wilcoxon / Kruskal)"      = "nonparametric",
+                                   "Dunnett-style: vs control only (Holm)"    = "parametric_vs_control",
+                                   "Mann-Whitney vs control only (Holm)"      = "nonparametric_vs_control"),
+                       selected = "parametric"),
+          "Dunnett/Holm options compare every non-control group to the control only \u2014 Prism's default for dose-response."
+        ),
+        sidebar_tip(
+          radioButtons("sig_format", "P-value display",
+                       choices = c("Exact (p = 0.0123)" = "exact",
+                                   "Stars (*, **, ***, ****)" = "stars"),
+                       selected = "exact"),
+          "Some journals require star notation instead of exact values."
+        ),
+        checkboxInput("paired", "Paired samples (2 groups only)", value = FALSE)
+      ),
+
+      # --- Step 4: Plot -------------------------------------------------------
+      bslib::accordion_panel(
+        value = "plot",
+        title = tagList(icon("chart-column"), " 4. Plot"),
+        radioButtons("plot_type", "Plot type",
+                     choices = c("Scatter + error bars" = "scatter",
+                                 "Column + dots" = "column"),
+                     inline = TRUE),
+        radioButtons("plot_layout", "Plot layout",
+                     choices = c("Individual" = "individual",
+                                 "Combined grid" = "combined"),
+                     selected = "individual"),
+        conditionalPanel(
+          "input.plot_layout == 'combined'",
+          numericInput("facet_ncol", "Columns in grid",
+                       value = 3, min = 1, max = 6, step = 1)
+        ),
+        sidebar_tip(
+          radioButtons("error_type", "Error bars",
+                       choices = c("SD" = "SD", "SEM" = "SEM", "95% CI" = "CI95"),
+                       inline = TRUE),
+          "95 % CI uses the t-distribution (Prism default)."
+        ),
+        checkboxInput("show_sig", "Show significance bars", value = TRUE),
+        checkboxInput("rotate_x", "Rotate x-axis labels 45\u00b0", value = FALSE),
+        sliderInput("aspect_ratio", "Plot aspect ratio (height/width)",
+                    min = 0.5, max = 2.5, value = 1.0, step = 0.1),
+        fluidRow(
+          column(6, numericInput("y_min", "Y-axis min", value = NA, step = 0.5)),
+          column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
+        ),
+        uiOutput("hide_comps_ui"),
+        if (has_plotly)
+          sidebar_tip(
+            checkboxInput("interactive_plot",
+                          tagList(icon("wand-magic-sparkles"),
+                                  " Interactive plot (hover tooltips)"),
+                          value = FALSE),
+            "Renders with plotly \u2014 hover over dots to see exact log\u2082 FC values. Downloads still use static ggplot."
+          )
+      ),
+
+      # --- Step 5: Styling ----------------------------------------------------
+      bslib::accordion_panel(
+        value = "styling",
+        title = tagList(icon("palette"), " 5. Styling"),
+        sidebar_tip(
+          selectInput("font_family", "Font family",
+                      choices = c("Default (sans)" = "",
+                                  "Serif"          = "serif",
+                                  "Mono"           = "mono",
+                                  "Arial"          = "Arial",
+                                  "Helvetica"      = "Helvetica",
+                                  "Times New Roman"= "Times New Roman",
+                                  "Courier New"    = "Courier New"),
+                      selected = ""),
+          "Generic families always work; named fonts depend on OS availability."
+        ),
+        sliderInput("ts_title",      "Plot title size",     6, 28, 18, 1),
+        sliderInput("ts_axis_title", "Axis title size",     6, 24, 14, 1),
+        sliderInput("ts_axis_text",  "Axis tick text size", 6, 22, 12, 1),
+        sliderInput("ts_legend",     "Legend text size",    6, 20, 12, 1),
+        sliderInput("ts_facet",      "Facet (gene) title size", 6, 24, 14, 1),
+        sliderInput("ts_sig_bar",    "Sig-bar text size",   2, 10, 3.5, 0.5),
+        uiOutput("color_picker_ui"),
+        actionButton("reset_colors", "Reset colors to Okabe-Ito",
+                     icon = icon("rotate-left"),
+                     style = "width:100%; margin-top:6px;")
+      ),
+
+      # --- Step 6: Export -----------------------------------------------------
+      bslib::accordion_panel(
+        value = "export",
+        title = tagList(icon("download"), " 6. Export size"),
+        p(style = "font-size:11px; color:#666; margin-bottom:4px;",
+          "Exact dimensions for manuscript figures. Common widths: ",
+          strong("85 mm"), " (single column), ", strong("174 mm"),
+          " (double column), ", strong("89/183 mm"), " (Nature)."),
+        fluidRow(
+          column(6, numericInput("export_w_mm", "Width (mm)",
+                                 value = 174, min = 30, max = 400, step = 1)),
+          column(6, numericInput("export_h_mm", "Height (mm)",
+                                 value = 120, min = 30, max = 400, step = 1))
+        ),
+        radioButtons("export_dpi", "DPI (PNG/TIFF)",
+                     choices = c("300" = 300, "600" = 600, "1200" = 1200),
+                     selected = 300, inline = TRUE),
+        p(style = "font-size:11px; color:#666;",
+          em("SVG and PDF are vector \u2014 DPI ignored."))
+      )
+    )
   )
 }
 
@@ -353,66 +542,172 @@ help_content <- function() {
 }
 
 # ---- UI -------------------------------------------------------------------
-ui <- navbarPage(
-  title = "qPCR Analysis \u2014 \u0394\u0394Ct Method",
-  tabPanel(
-    "Analysis",
-    sidebarLayout(
-      sidebarPanel(width = 4, shared_sidebar()),
-      mainPanel(
-        width = 8,
-        uiOutput("plots_ui"),
-        br(),
-        h4("Statistics"),
-        DTOutput("stats_table"),
-        br(),
-        h4("Methods (copy-paste for papers)"),
-        verbatimTextOutput("methods_text"),
-        br(),
-        fluidRow(
-          column(2, downloadButton("dl_png",     "PNG")),
-          column(2, downloadButton("dl_pdf",     "PDF")),
-          column(2, downloadButton("dl_svg",     "SVG")),
-          column(2, downloadButton("dl_tiff",    "TIFF")),
-          column(2, downloadButton("dl_csv",     "Stats")),
-          column(2, downloadButton("dl_methods", "Methods"))
-        )
-      )
-    )
-  ),
-  tabPanel(
-    "Repeated Measures / Animal",
-    sidebarLayout(
-      sidebarPanel(
-        width = 4,
-        p(style = "font-size:13px;",
-          "This tab uses the same data pasted in the ", strong("Analysis"), " tab, ",
-          "but treats ", strong("each Sample name as one animal"), ". ",
-          "Each Sample must appear in 2+ Groups."),
-        hr(),
-        h5("RM plot style"),
-        p(style = "font-size:12px; color:#888;",
-          "Dots are colored by animal; thin lines connect the same animal across groups.")
+# bslib theme: Bootstrap 5, lab-teal primary color, Inter font from Google.
+# Supports light/dark mode via `input_dark_mode()`.
+app_theme <- bslib::bs_theme(
+  version     = 5,
+  primary     = "#00A8A8",
+  "navbar-bg" = "#00A8A8",
+  base_font   = bslib::font_google("Inter", local = FALSE),
+  heading_font = bslib::font_google("Inter", local = FALSE)
+)
+
+# Panel used by the Analysis tab — main content area, reused in the layout.
+analysis_main_panel <- function() {
+  tagList(
+    # Plot card (title + content slot)
+    bslib::card(
+      class = "plot-card",
+      bslib::card_header(
+        div(style = "display:flex; justify-content:space-between; align-items:center;",
+            div(icon("chart-column"), strong(" Plot")),
+            uiOutput("plot_metadata_chip", inline = TRUE))
       ),
-      mainPanel(
-        width = 8,
-        uiOutput("rm_status"),
-        uiOutput("rm_plot_ui"),
-        br(),
-        h4("Paired statistics"),
-        DTOutput("rm_stats_table"),
-        br(),
+      bslib::card_body(
+        min_height = "420px",
+        uiOutput("plots_ui")
+      )
+    ),
+
+    # Statistics card
+    bslib::card(
+      bslib::card_header(icon("square-root-variable"), strong(" Statistics")),
+      bslib::card_body(DTOutput("stats_table"))
+    ),
+
+    # Methods card with copy-to-clipboard button
+    bslib::card(
+      bslib::card_header(icon("file-lines"), strong(" Methods (copy-paste for papers)")),
+      bslib::card_body(
+        div(class = "methods-copy-wrap",
+            actionButton("copy_methods", "Copy",
+                         icon = icon("copy"),
+                         class = "btn-sm btn-outline-primary methods-copy-btn"),
+            verbatimTextOutput("methods_text")
+        )
+      )
+    ),
+
+    # Downloads card
+    bslib::card(
+      bslib::card_header(icon("download"), strong(" Downloads")),
+      bslib::card_body(
         fluidRow(
-          column(2, downloadButton("rm_dl_png",  "PNG")),
-          column(2, downloadButton("rm_dl_pdf",  "PDF")),
-          column(2, downloadButton("rm_dl_svg",  "SVG")),
-          column(2, downloadButton("rm_dl_tiff", "TIFF")),
-          column(3, downloadButton("rm_dl_csv",  "Stats (CSV)"))
+          column(2, downloadButton("dl_png",     "PNG",     icon = icon("image"))),
+          column(2, downloadButton("dl_pdf",     "PDF",     icon = icon("file-pdf"))),
+          column(2, downloadButton("dl_svg",     "SVG",     icon = icon("bezier-curve"))),
+          column(2, downloadButton("dl_tiff",    "TIFF",    icon = icon("image"))),
+          column(2, downloadButton("dl_csv",     "Stats",   icon = icon("table"))),
+          column(2, downloadButton("dl_methods", "Methods", icon = icon("file-lines")))
         )
       )
     )
+  )
+}
+
+# Panel used by the Repeated Measures tab.
+rm_main_panel <- function() {
+  tagList(
+    bslib::card(
+      class = "plot-card",
+      bslib::card_header(icon("link"), strong(" Paired plot (animal-matched)")),
+      bslib::card_body(
+        min_height = "420px",
+        uiOutput("rm_status"),
+        uiOutput("rm_plot_ui")
+      )
+    ),
+    bslib::card(
+      bslib::card_header(icon("square-root-variable"), strong(" Paired statistics")),
+      bslib::card_body(DTOutput("rm_stats_table"))
+    ),
+    bslib::card(
+      bslib::card_header(icon("download"), strong(" Downloads")),
+      bslib::card_body(
+        fluidRow(
+          column(2, downloadButton("rm_dl_png",  "PNG",   icon = icon("image"))),
+          column(2, downloadButton("rm_dl_pdf",  "PDF",   icon = icon("file-pdf"))),
+          column(2, downloadButton("rm_dl_svg",  "SVG",   icon = icon("bezier-curve"))),
+          column(2, downloadButton("rm_dl_tiff", "TIFF",  icon = icon("image"))),
+          column(3, downloadButton("rm_dl_csv",  "Stats (CSV)",
+                                   icon = icon("table")))
+        )
+      )
+    )
+  )
+}
+
+rm_sidebar <- function() {
+  tagList(
+    p(style = "font-size:13px;",
+      icon("info-circle"), " This tab uses the same data pasted in the ",
+      strong("Analysis"), " tab, but treats ",
+      strong("each Sample name as one animal"),
+      ". Each Sample must appear in 2+ Groups."),
+    hr(),
+    h6(icon("link"), " RM plot style"),
+    p(style = "font-size:12px; color:#888;",
+      "Dots are colored by animal; thin lines connect the same animal across groups.")
+  )
+}
+
+ui <- bslib::page_navbar(
+  title = tagList(icon("dna"), " qPCR Analysis"),
+  window_title = "qPCR Analysis \u2014 \u0394\u0394Ct",
+  theme = app_theme,
+  header = tags$head(
+    tags$style(HTML(app_css)),
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('copy_to_clipboard', function(msg) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(msg.text);
+        } else {
+          // Legacy fallback
+          var ta = document.createElement('textarea');
+          ta.value = msg.text; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+      });
+    "))
   ),
-  tabPanel("Help", fluidPage(help_content()))
+
+  bslib::nav_panel(
+    tagList(icon("chart-column"), " Analysis"),
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(
+        width  = 380,
+        open   = TRUE,
+        shared_sidebar()
+      ),
+      analysis_main_panel()
+    )
+  ),
+
+  bslib::nav_panel(
+    tagList(icon("link"), " Repeated Measures"),
+    bslib::layout_sidebar(
+      sidebar = bslib::sidebar(width = 320, open = TRUE, rm_sidebar()),
+      rm_main_panel()
+    )
+  ),
+
+  bslib::nav_panel(
+    tagList(icon("circle-question"), " Help"),
+    div(style = "padding: 20px; max-width: 960px; margin: auto;",
+        help_content())
+  ),
+
+  # Right-side navbar items: data status badge, dark mode toggle, GitHub link.
+  bslib::nav_spacer(),
+  bslib::nav_item(uiOutput("data_status_badge", inline = TRUE)),
+  bslib::nav_item(bslib::input_dark_mode(id = "dark_mode")),
+  bslib::nav_item(
+    tags$a(icon("github"), " GitHub",
+           href = "https://github.com/karthi-ntu/qPCR_analysis",
+           target = "_blank",
+           style = "color: white; margin-right: 10px;")
+  )
 )
 
 # ---- Server ---------------------------------------------------------------
@@ -422,6 +717,73 @@ server <- function(input, output, session) {
 
   long_data    <- reactive({ to_long_df(rv$wide) })
   has_subgroup <- reactive({ "Subgroup" %in% names(rv$wide) })
+
+  # -- Top-bar data status badge -------------------------------------------
+  output$data_status_badge <- renderUI({
+    data_status_badge_html(rv$wide, has_subgroup())
+  })
+
+  # -- Data summary card (shows above the data table after paste) ---------
+  output$data_summary_ui <- renderUI({
+    wide <- rv$wide
+    if (nrow(wide) == 0) {
+      return(div(class = "data-summary empty",
+                 icon("circle-info"), " No data yet. Paste from Excel or load an example above."))
+    }
+    gene_cols <- setdiff(names(wide), c("Sample", "Group", "Subgroup", "Ct_reference"))
+    groups    <- unique(wide$Group[nzchar(wide$Group)])
+    sub_txt <- if (has_subgroup()) {
+      subs <- unique(wide$Subgroup[nzchar(wide$Subgroup)])
+      paste0(" \u00b7 Subgroups: ", paste(subs, collapse = ", "))
+    } else ""
+    na_cells <- sum(sapply(gene_cols, function(g) sum(is.na(wide[[g]]))))
+    na_msg <- if (na_cells > 0)
+      span(class = "text-warning", " \u00b7 ", na_cells, " NA value(s)")
+    cls <- if (na_cells > 0) "data-summary warn" else "data-summary"
+    div(class = cls,
+        icon("check-circle"), " ",
+        strong(nrow(wide), "samples"), " \u00b7 ",
+        strong(length(gene_cols)), if (length(gene_cols) == 1) " gene" else " genes",
+        " (", paste(gene_cols, collapse = ", "), ") \u00b7 ",
+        strong(length(groups)), " groups (", paste(groups, collapse = ", "), ")",
+        sub_txt, na_msg)
+  })
+
+  # -- Guided vs Expert mode: open/close accordion panels ------------------
+  # When Guided is on, only Step 1 stays open. When off, all 6 open at once.
+  observeEvent(input$guided_mode, {
+    all_steps <- c("data", "experiment", "stats", "plot", "styling", "export")
+    if (isTRUE(input$guided_mode)) {
+      # Close everything except Data.
+      for (s in setdiff(all_steps, "data"))
+        bslib::accordion_panel_close("sidebar_accordion", values = s)
+      bslib::accordion_panel_open("sidebar_accordion", values = "data")
+    } else {
+      for (s in all_steps)
+        bslib::accordion_panel_open("sidebar_accordion", values = s)
+    }
+  }, ignoreInit = TRUE)
+
+  # -- Example data loaders --------------------------------------------------
+  observeEvent(input$load_ex_1factor, {
+    rv$wide <- example_data_1factor()
+    showNotification("Loaded 1-factor example (Control vs Treated, 2 genes)",
+                     type = "message", duration = 3)
+  })
+  observeEvent(input$load_ex_2factor, {
+    rv$wide <- example_data_2factor()
+    showNotification("Loaded 2-factor example (Young/Aged \u00d7 Control/Thaps)",
+                     type = "message", duration = 3)
+  })
+
+  # -- Copy-to-clipboard for methods text -----------------------------------
+  observeEvent(input$copy_methods, {
+    txt <- methods_txt()
+    req(nzchar(txt))
+    session$sendCustomMessage("copy_to_clipboard", list(text = txt))
+    showNotification("Methods copied to clipboard",
+                     type = "message", duration = 2)
+  })
 
   # -- Shared table ----------------------------------------------------------
   output$table <- renderDT({
@@ -588,17 +950,37 @@ server <- function(input, output, session) {
     )
   })
 
+  # -- Control group dropdown (populated from detected Group column) --------
+  # Falls back to a disabled placeholder when no data has been pasted yet.
+  # Preserves the user's current selection on re-render via isolate().
+  output$ctrl_group_ui <- renderUI({
+    grps <- unique(rv$wide$Group)
+    grps <- grps[nzchar(grps)]
+    if (length(grps) == 0) {
+      return(selectInput("ctrl_group", "Control group name",
+                         choices = c("(paste data first)" = ""),
+                         selected = ""))
+    }
+    current <- isolate(input$ctrl_group)
+    sel <- if (!is.null(current) && nzchar(current) && current %in% grps)
+             current else grps[1]
+    selectInput("ctrl_group", "Control group name",
+                choices = grps, selected = sel)
+  })
+
   # -- Control subgroup selector (only appears when Subgroup column present) --
   output$ctrl_subgroup_ui <- renderUI({
     if (!has_subgroup()) return(NULL)
     subs <- unique(rv$wide$Subgroup)
     subs <- subs[nzchar(subs)]
     if (length(subs) == 0) return(NULL)
+    current <- isolate(input$ctrl_subgroup)
+    sel <- if (!is.null(current) && current %in% c("", subs)) current else ""
     selectInput(
       "ctrl_subgroup",
       "Control subgroup (optional)",
       choices = c("(use Group mean - mix all subgroups)" = "", subs),
-      selected = ""
+      selected = sel
     )
   })
 
@@ -608,8 +990,13 @@ server <- function(input, output, session) {
     if (nrow(df) == 0) return("Add at least one gene column and enter data.")
     if (any(is.na(df$Ct_target) | is.na(df$Ct_reference)))
       return("All Ct values must be numeric.")
-    if (!input$ctrl_group %in% df$Group)
-      return(paste0("Control group '", input$ctrl_group, "' not found in Group column."))
+    # input$ctrl_group comes from a dynamic selectInput (renderUI) and is NULL
+    # until the UI has rendered and Shiny has synced its value. Tolerate that
+    # instead of throwing "argument is of length zero".
+    ctrl <- input$ctrl_group %||% ""
+    if (!nzchar(ctrl)) return("Waiting for control group selection\u2026")
+    if (!ctrl %in% df$Group)
+      return(paste0("Control group '", ctrl, "' not found in Group column."))
     grp_counts <- table(df$Gene, df$Group)
     if (any(grp_counts[grp_counts > 0] < 2))
       return("At least 2 samples per group per gene required.")
@@ -652,6 +1039,19 @@ server <- function(input, output, session) {
   })
 
   genes_in_data <- reactive({ req(analyzed()); unique(analyzed()$Gene) })
+
+  # -- Plot metadata chip (shown in the plot card header) ------------------
+  output$plot_metadata_chip <- renderUI({
+    if (is.null(validation_msg()) && !is.null(stats_result())) {
+      test_name <- unique(stats_result()$Test)[1] %||% ""
+      n_txt <- tryCatch(replicate_summary(analyzed(),
+                                          rep_mode = input$rep_mode %||% "biological"),
+                        error = function(e) "")
+      tags$span(style = "font-size:12px; color:#666;",
+                if (nzchar(n_txt)) paste(n_txt, " \u00b7 ", sep = "") else "",
+                if (nzchar(test_name)) test_name else "")
+    }
+  })
 
   # -- Significance bar controls (with select/deselect all) -----------------
   output$hide_comps_ui <- renderUI({
@@ -706,19 +1106,24 @@ server <- function(input, output, session) {
   # -- Plots (Tab 1) ---------------------------------------------------------
   output$plots_ui <- renderUI({
     req(genes_in_data())
+    # Swap to plotly outputs when the "Interactive" toggle is on.
+    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
+    plot_out <- if (use_plotly) plotly::plotlyOutput else plotOutput
     if (identical(input$plot_layout, "combined")) {
       n      <- length(genes_in_data())
       ncol   <- max(1, as.integer(input$facet_ncol %||% 3))
       nrow   <- ceiling(n / ncol)
       height <- paste0(max(350, 350 * nrow), "px")
-      plotOutput("plot_combined", height = height)
+      plot_out("plot_combined", height = height)
     } else {
       do.call(tagList, lapply(genes_in_data(), function(gene)
-        plotOutput(paste0("plot_", make.names(gene)), height = "450px")))
+        plot_out(paste0("plot_", make.names(gene)), height = "450px")))
     }
   })
 
-  output$plot_combined <- renderPlot({
+  # Build the combined ggplot as a reactive so both static and interactive
+  # renderers can share it.
+  combined_plot_obj <- reactive({
     req(genes_in_data())
     make_combined_plot(analyzed(), stats_result(),
                        error_type    = input$error_type,
@@ -734,17 +1139,55 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
-                       x_axis_var        = input$x_axis_var        %||% "Group",
+                       x_axis_var    = input$x_axis_var %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   })
 
+  # Register combined plot output as either static or interactive based on
+  # the user's toggle. Re-registered whenever the toggle flips.
+  observe({
+    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
+    if (use_plotly) {
+      output$plot_combined <- plotly::renderPlotly({
+        plotly::ggplotly(combined_plot_obj(),
+                         tooltip = c("fill", "y"))
+      })
+    } else {
+      output$plot_combined <- renderPlot({ combined_plot_obj() })
+    }
+  })
+
   observe({
     req(genes_in_data())
+    use_plotly <- isTRUE(input$interactive_plot) && has_plotly
     lapply(genes_in_data(), function(gene) {
       local({
         g <- gene
-        output[[paste0("plot_", make.names(g))]] <- renderPlot({
+        out_id <- paste0("plot_", make.names(g))
+        if (use_plotly) {
+          output[[out_id]] <- plotly::renderPlotly({
+            plotly::ggplotly(make_barplot(
+              analyzed(), stats_result(), gene = g,
+              error_type    = input$error_type,
+              plot_type     = input$plot_type,
+              show_sig      = input$show_sig,
+              sig_comparisons = visible_comps_for_gene(g),
+              control_group = baseline_label(),
+              rotate_x      = input$rotate_x,
+              aspect_ratio  = input$aspect_ratio,
+              has_subgroup  = has_subgroup(),
+              fill_override = color_override(),
+              text_sizes    = text_sizes(),
+              font_family   = input$font_family %||% "",
+              sig_format    = input$sig_format %||% "exact",
+              x_axis_var    = input$x_axis_var %||% "Group",
+              y_min = if (is.na(input$y_min)) NULL else input$y_min,
+              y_max = if (is.na(input$y_max)) NULL else input$y_max
+            ), tooltip = c("fill", "y"))
+          })
+        } else {
+        output[[out_id]] <- renderPlot({
           make_barplot(analyzed(), stats_result(), gene = g,
                        error_type    = input$error_type,
                        plot_type     = input$plot_type,
@@ -762,6 +1205,7 @@ server <- function(input, output, session) {
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
+        }  # close else (static render branch)
       })
     })
   })
@@ -936,9 +1380,12 @@ server <- function(input, output, session) {
     if (!is_repeated_measures(df))
       return(list(ok = FALSE,
                   msg = "This data doesn't look like repeated measures. Each Sample appears in only one Group. Use the Analysis tab instead."))
-    if (!input$ctrl_group %in% df$Group)
+    ctrl <- input$ctrl_group %||% ""
+    if (!nzchar(ctrl))
+      return(list(ok = FALSE, msg = "Waiting for control group selection\u2026"))
+    if (!ctrl %in% df$Group)
       return(list(ok = FALSE,
-                  msg = paste0("Control group '", input$ctrl_group, "' not found.")))
+                  msg = paste0("Control group '", ctrl, "' not found.")))
     list(ok = TRUE, msg = NULL)
   })
 
