@@ -112,49 +112,121 @@ make_barplot <- function(full_df, stats_df, gene,
                          fill_override = NULL,
                          text_sizes    = DEFAULT_TEXT_SIZES,
                          font_family   = "",
-                         sig_format    = "exact") {
+                         sig_format    = "exact",
+                         two_factor_layout = "combined",
+                         x_axis_var        = "Group") {
   sub <- full_df[full_df$Gene == gene, ]
   sub$Group <- factor(sub$Group, levels = unique(sub$Group))
   err_fun  <- make_err_fun(error_type)
 
   use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(sub) &&
              length(unique(sub$Subgroup)) >= 2
-  if (use_sub) {
-    sub$Subgroup <- factor(sub$Subgroup, levels = unique(sub$Subgroup))
-    sub$XCell    <- interaction(sub$Group, sub$Subgroup,
-                                sep = " | ", drop = TRUE, lex.order = FALSE)
+  grouped_layout <- use_sub && identical(two_factor_layout, "grouped")
+
+  if (use_sub) sub$Subgroup <- factor(sub$Subgroup, levels = unique(sub$Subgroup))
+
+  if (grouped_layout) {
+    # Prism 'Grouped' style: one factor on x-axis, the other dodged/colored.
+    if (identical(x_axis_var, "Subgroup")) {
+      x_fac <- sub$Subgroup; col_fac <- sub$Group
+      x_name <- "Subgroup";  col_name <- "Group"
+    } else {
+      x_fac <- sub$Group;    col_fac <- sub$Subgroup
+      x_name <- "Group";     col_name <- "Subgroup"
+    }
+    sub$XVar   <- x_fac
+    sub$ColVar <- col_fac
+    n_fills  <- nlevels(col_fac)
+    dodge_w  <- 0.75
+    pd       <- position_dodge(width = dodge_w)
+    pj       <- position_jitterdodge(jitter.width = 0.12,
+                                     dodge.width  = dodge_w,
+                                     seed = 1)
+    p <- ggplot(sub, aes(x = XVar, y = log2_fold_change, fill = ColVar)) +
+      geom_hline(yintercept = 0, linetype = "dotted",
+                 linewidth = 0.8, color = "gray40")
+    if (plot_type == "column") {
+      p <- p +
+        stat_summary(fun = mean, geom = "col", color = "black",
+                     linewidth = 0.6, width = dodge_w * 0.85, alpha = 0.85,
+                     position = pd) +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black",
+                     position = pd) +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, alpha = 0.95, position = pj)
+    } else {
+      p <- p +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black",
+                     position = pd) +
+        stat_summary(fun = mean, geom = "errorbar",
+                     fun.min = mean, fun.max = mean,
+                     width = 0.4, linewidth = 1.2, color = "black",
+                     position = pd) +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, alpha = 0.95, position = pj)
+    }
+    fill_levels <- levels(col_fac)
+    fill_values <- resolve_fill(fill_override, fill_levels)
+  } else if (use_sub) {
+    # Combined layout: "Group | Subgroup" as single x labels.
+    sub$XCell <- interaction(sub$Group, sub$Subgroup,
+                             sep = " | ", drop = TRUE, lex.order = FALSE)
     n_fills <- nlevels(sub$Subgroup)
-    p <- ggplot(sub, aes(x = XCell, y = log2_fold_change, fill = Subgroup))
-    # Longer labels in the 2x2 case — auto-rotate if user didn't already.
+    p <- ggplot(sub, aes(x = XCell, y = log2_fold_change, fill = Subgroup)) +
+      geom_hline(yintercept = 0, linetype = "dotted",
+                 linewidth = 0.8, color = "gray40")
     rotate_x <- TRUE
+    if (plot_type == "column") {
+      p <- p +
+        stat_summary(fun = mean, geom = "col", color = "black",
+                     linewidth = 0.6, width = 0.65, alpha = 0.85) +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black") +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, width = 0.12, alpha = 0.95)
+    } else {
+      p <- p +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black") +
+        stat_summary(fun = mean, geom = "errorbar",
+                     fun.min = mean, fun.max = mean,
+                     width = 0.4, linewidth = 1.2, color = "black") +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, width = 0.12, alpha = 0.95)
+    }
+    fill_levels <- levels(sub$Subgroup)
+    fill_values <- resolve_fill(fill_override, fill_levels)
   } else {
+    # Single-factor (no subgroup)
     n_fills <- nlevels(sub$Group)
-    p <- ggplot(sub, aes(x = Group, y = log2_fold_change, fill = Group))
+    p <- ggplot(sub, aes(x = Group, y = log2_fold_change, fill = Group)) +
+      geom_hline(yintercept = 0, linetype = "dotted",
+                 linewidth = 0.8, color = "gray40")
+    if (plot_type == "column") {
+      p <- p +
+        stat_summary(fun = mean, geom = "col", color = "black",
+                     linewidth = 0.6, width = 0.65, alpha = 0.85) +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black") +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, width = 0.12, alpha = 0.95)
+    } else {
+      p <- p +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black") +
+        stat_summary(fun = mean, geom = "errorbar",
+                     fun.min = mean, fun.max = mean,
+                     width = 0.4, linewidth = 1.2, color = "black") +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 3, width = 0.12, alpha = 0.95)
+    }
+    fill_levels <- levels(sub$Group)
+    fill_values <- resolve_fill(fill_override, fill_levels)
   }
-  p <- p +
-    geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.8, color = "gray40")
 
-  if (plot_type == "column") {
-    p <- p +
-      stat_summary(fun = mean, geom = "col", color = "black",
-                   linewidth = 0.6, width = 0.65, alpha = 0.85) +
-      stat_summary(fun.data = err_fun, geom = "errorbar",
-                   width = 0.25, linewidth = 0.8, color = "black") +
-      geom_jitter(shape = 21, color = "black", stroke = 0.5,
-                  size = 3, width = 0.12, alpha = 0.95)
-  } else {
-    p <- p +
-      stat_summary(fun.data = err_fun, geom = "errorbar",
-                   width = 0.25, linewidth = 0.8, color = "black") +
-      stat_summary(fun = mean, geom = "errorbar",
-                   fun.min = mean, fun.max = mean,
-                   width = 0.4, linewidth = 1.2, color = "black") +
-      geom_jitter(shape = 21, color = "black", stroke = 0.5,
-                  size = 3, width = 0.12, alpha = 0.95)
-  }
-
-  fill_levels <- if (use_sub) levels(sub$Subgroup) else levels(sub$Group)
-  fill_values <- resolve_fill(fill_override, fill_levels)
+  fill_label <- if (grouped_layout) col_name else if (use_sub) "Subgroup" else NULL
 
   p <- p +
     scale_fill_manual(values = fill_values) +
@@ -162,7 +234,7 @@ make_barplot <- function(full_df, stats_df, gene,
       title = gene,
       y     = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
       x     = NULL,
-      fill  = if (use_sub) "Subgroup" else NULL
+      fill  = fill_label
     ) +
     prism_theme(rotate_x    = rotate_x,
                 text_sizes  = text_sizes,
@@ -184,24 +256,81 @@ make_barplot <- function(full_df, stats_df, gene,
     if (!is.null(sig_comparisons))
       sig <- sig[sig$Comparison %in% sig_comparisons, ]
     if (nrow(sig) > 0) {
-      comparisons_list <- lapply(sig$Comparison, function(comp)
-        trimws(strsplit(comp, " vs ", fixed = TRUE)[[1]]))
       sig_fmt  <- pick_sig_formatter(sig_format)
       sig_size <- as.numeric(modifyList(DEFAULT_TEXT_SIZES,
                                         as.list(text_sizes))$sig_bar)
-      p <- p + geom_signif(
-        comparisons      = comparisons_list,
-        annotations      = sig_fmt(sig$p_value),
-        map_signif_level = FALSE,
-        step_increase    = 0.13,
-        textsize         = sig_size,
-        fontface         = "bold",
-        family           = if (nzchar(font_family)) font_family else "",
-        vjust            = -0.6,
-        tip_length       = 0.02,
-        size             = 0.7,
-        color            = "black"
-      )
+
+      if (grouped_layout) {
+        # Compute numeric x positions for the dodged layout.
+        x_levels   <- levels(x_fac)
+        col_levels <- levels(col_fac)
+        n_col <- length(col_levels)
+        # Position of each (x, col) cell center on the continuous axis.
+        cell_pos <- function(x_lab, col_lab) {
+          xi <- match(x_lab, x_levels)
+          ci <- match(col_lab, col_levels)
+          xi + (ci - (n_col + 1) / 2) * (dodge_w / n_col)
+        }
+        # Each Comparison is "Group | Subgroup vs Group | Subgroup".
+        parse_cell <- function(s) {
+          bits <- trimws(strsplit(s, "|", fixed = TRUE)[[1]])
+          list(Group = bits[1], Subgroup = bits[2])
+        }
+        pairs <- strsplit(sig$Comparison, " vs ", fixed = TRUE)
+        valid <- vapply(pairs, function(p) length(p) == 2 &&
+                          grepl("|", p[1], fixed = TRUE) &&
+                          grepl("|", p[2], fixed = TRUE), logical(1))
+        sig   <- sig[valid, ]; pairs <- pairs[valid]
+        if (nrow(sig) > 0) {
+          y_hi <- max(sub$log2_fold_change, na.rm = TRUE)
+          y_lo <- min(sub$log2_fold_change, na.rm = TRUE)
+          step <- 0.13 * max(y_hi - y_lo, 1)
+          xmin <- numeric(nrow(sig)); xmax <- numeric(nrow(sig))
+          for (i in seq_len(nrow(sig))) {
+            c1 <- parse_cell(pairs[[i]][1]); c2 <- parse_cell(pairs[[i]][2])
+            x1 <- cell_pos(c1[[x_name]], c1[[col_name]])
+            x2 <- cell_pos(c2[[x_name]], c2[[col_name]])
+            xmin[i] <- min(x1, x2); xmax[i] <- max(x1, x2)
+          }
+          rows <- data.frame(
+            xmin       = xmin,
+            xmax       = xmax,
+            y_position = y_hi + step * seq_len(nrow(sig)),
+            annotations = sig_fmt(sig$p_value),
+            stringsAsFactors = FALSE
+          )
+          p <- p + geom_signif(
+            data    = rows,
+            aes(xmin = xmin, xmax = xmax,
+                annotations = annotations, y_position = y_position),
+            manual      = TRUE,
+            textsize    = sig_size,
+            fontface    = "bold",
+            family      = if (nzchar(font_family)) font_family else "",
+            vjust       = -0.4,
+            tip_length  = 0.02,
+            size        = 0.7,
+            color       = "black",
+            inherit.aes = FALSE
+          )
+        }
+      } else {
+        comparisons_list <- lapply(sig$Comparison, function(comp)
+          trimws(strsplit(comp, " vs ", fixed = TRUE)[[1]]))
+        p <- p + geom_signif(
+          comparisons      = comparisons_list,
+          annotations      = sig_fmt(sig$p_value),
+          map_signif_level = FALSE,
+          step_increase    = 0.13,
+          textsize         = sig_size,
+          fontface         = "bold",
+          family           = if (nzchar(font_family)) font_family else "",
+          vjust            = -0.6,
+          tip_length       = 0.02,
+          size             = 0.7,
+          color            = "black"
+        )
+      }
     }
   }
 
@@ -237,17 +366,36 @@ make_combined_plot <- function(full_df, stats_df,
                                fill_override = NULL,
                                text_sizes    = DEFAULT_TEXT_SIZES,
                                font_family   = "",
-                               sig_format    = "exact") {
+                               sig_format    = "exact",
+                               two_factor_layout = "combined",
+                               x_axis_var        = "Group") {
   full_df$Gene  <- factor(full_df$Gene,  levels = unique(full_df$Gene))
   full_df$Group <- factor(full_df$Group, levels = unique(full_df$Group))
   err_fun  <- make_err_fun(error_type)
 
   use_sub <- isTRUE(has_subgroup) && "Subgroup" %in% names(full_df) &&
              length(unique(full_df$Subgroup)) >= 2
-  if (use_sub) {
-    full_df$Subgroup <- factor(full_df$Subgroup, levels = unique(full_df$Subgroup))
-    full_df$XCell    <- interaction(full_df$Group, full_df$Subgroup,
-                                    sep = " | ", drop = TRUE, lex.order = FALSE)
+  grouped_layout <- use_sub && identical(two_factor_layout, "grouped")
+
+  if (use_sub) full_df$Subgroup <- factor(full_df$Subgroup,
+                                          levels = unique(full_df$Subgroup))
+
+  dodge_w <- 0.75
+  if (grouped_layout) {
+    if (identical(x_axis_var, "Subgroup")) {
+      full_df$XVar   <- full_df$Subgroup; full_df$ColVar <- full_df$Group
+      x_levels   <- levels(full_df$Subgroup); col_levels <- levels(full_df$Group)
+      x_name <- "Subgroup"; col_name <- "Group"
+    } else {
+      full_df$XVar   <- full_df$Group;    full_df$ColVar <- full_df$Subgroup
+      x_levels   <- levels(full_df$Group);    col_levels <- levels(full_df$Subgroup)
+      x_name <- "Group";    col_name <- "Subgroup"
+    }
+    n_fills <- length(col_levels)
+    p <- ggplot(full_df, aes(x = XVar, y = log2_fold_change, fill = ColVar))
+  } else if (use_sub) {
+    full_df$XCell <- interaction(full_df$Group, full_df$Subgroup,
+                                 sep = " | ", drop = TRUE, lex.order = FALSE)
     n_fills <- nlevels(full_df$Subgroup)
     p <- ggplot(full_df, aes(x = XCell, y = log2_fold_change, fill = Subgroup))
     rotate_x <- TRUE
@@ -258,7 +406,32 @@ make_combined_plot <- function(full_df, stats_df,
   p <- p +
     geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.8, color = "gray40")
 
-  if (plot_type == "column") {
+  if (grouped_layout) {
+    pd <- position_dodge(width = dodge_w)
+    pj <- position_jitterdodge(jitter.width = 0.12, dodge.width = dodge_w, seed = 1)
+    if (plot_type == "column") {
+      p <- p +
+        stat_summary(fun = mean, geom = "col", color = "black",
+                     linewidth = 0.6, width = dodge_w * 0.85, alpha = 0.85,
+                     position = pd) +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black",
+                     position = pd) +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 2.5, alpha = 0.95, position = pj)
+    } else {
+      p <- p +
+        stat_summary(fun.data = err_fun, geom = "errorbar",
+                     width = 0.25, linewidth = 0.8, color = "black",
+                     position = pd) +
+        stat_summary(fun = mean, geom = "errorbar",
+                     fun.min = mean, fun.max = mean,
+                     width = 0.4, linewidth = 1.2, color = "black",
+                     position = pd) +
+        geom_jitter(shape = 21, color = "black", stroke = 0.5,
+                    size = 2.5, alpha = 0.95, position = pj)
+    }
+  } else if (plot_type == "column") {
     p <- p +
       stat_summary(fun = mean, geom = "col", color = "black",
                    linewidth = 0.6, width = 0.65, alpha = 0.85) +
@@ -277,8 +450,13 @@ make_combined_plot <- function(full_df, stats_df,
                   size = 2.5, width = 0.12, alpha = 0.95)
   }
 
-  fill_levels <- if (use_sub) levels(full_df$Subgroup) else levels(full_df$Group)
+  fill_levels <- if (grouped_layout) col_levels
+                 else if (use_sub) levels(full_df$Subgroup)
+                 else levels(full_df$Group)
   fill_values <- resolve_fill(fill_override, fill_levels)
+
+  fill_label <- if (grouped_layout) col_name
+                else if (use_sub) "Subgroup" else NULL
 
   p <- p +
     scale_fill_manual(values = fill_values) +
@@ -286,7 +464,7 @@ make_combined_plot <- function(full_df, stats_df,
     labs(
       y    = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
       x    = NULL,
-      fill = if (use_sub) "Subgroup" else NULL
+      fill = fill_label
     ) +
     prism_theme(rotate_x    = rotate_x,
                 text_sizes  = text_sizes,
@@ -312,38 +490,93 @@ make_combined_plot <- function(full_df, stats_df,
     }
     if (nrow(sig) > 0) {
       sig_fmt <- pick_sig_formatter(sig_format)
-      # Build per-gene bracket data with computed y positions
-      rows <- do.call(rbind, lapply(split(sig, sig$Gene), function(gsub) {
-        gene_data <- full_df[full_df$Gene == as.character(gsub$Gene[1]), ]
-        y_hi  <- max(gene_data$log2_fold_change, na.rm = TRUE)
-        y_lo  <- min(gene_data$log2_fold_change, na.rm = TRUE)
-        rng   <- max(y_hi - y_lo, 1)
-        step  <- 0.16 * rng
-        pairs <- strsplit(gsub$Comparison, " vs ", fixed = TRUE)
-        data.frame(
-          Gene         = gsub$Gene,
-          start        = sapply(pairs, `[`, 1),
-          end          = sapply(pairs, `[`, 2),
-          y_position   = y_hi + step * seq_len(nrow(gsub)),
-          annotations  = sig_fmt(gsub$p_value),
-          stringsAsFactors = FALSE
+      if (grouped_layout) {
+        n_col <- length(col_levels)
+        cell_pos <- function(x_lab, col_lab) {
+          xi <- match(x_lab, x_levels); ci <- match(col_lab, col_levels)
+          xi + (ci - (n_col + 1) / 2) * (dodge_w / n_col)
+        }
+        parse_cell <- function(s) {
+          bits <- trimws(strsplit(s, "|", fixed = TRUE)[[1]])
+          list(Group = bits[1], Subgroup = bits[2])
+        }
+        rows <- do.call(rbind, lapply(split(sig, sig$Gene), function(gsub) {
+          gene_data <- full_df[full_df$Gene == as.character(gsub$Gene[1]), ]
+          y_hi <- max(gene_data$log2_fold_change, na.rm = TRUE)
+          y_lo <- min(gene_data$log2_fold_change, na.rm = TRUE)
+          step <- 0.13 * max(y_hi - y_lo, 1)
+          pairs <- strsplit(gsub$Comparison, " vs ", fixed = TRUE)
+          keep  <- vapply(pairs, function(p) length(p) == 2 &&
+                            grepl("|", p[1], fixed = TRUE) &&
+                            grepl("|", p[2], fixed = TRUE), logical(1))
+          if (!any(keep)) return(NULL)
+          pairs <- pairs[keep]; gs2 <- gsub[keep, , drop = FALSE]
+          xmin <- numeric(length(pairs)); xmax <- numeric(length(pairs))
+          for (i in seq_along(pairs)) {
+            c1 <- parse_cell(pairs[[i]][1]); c2 <- parse_cell(pairs[[i]][2])
+            x1 <- cell_pos(c1[[x_name]], c1[[col_name]])
+            x2 <- cell_pos(c2[[x_name]], c2[[col_name]])
+            xmin[i] <- min(x1, x2); xmax[i] <- max(x1, x2)
+          }
+          data.frame(
+            Gene        = gs2$Gene,
+            xmin        = xmin,
+            xmax        = xmax,
+            y_position  = y_hi + step * seq_len(nrow(gs2)),
+            annotations = sig_fmt(gs2$p_value),
+            stringsAsFactors = FALSE
+          )
+        }))
+        if (!is.null(rows) && nrow(rows) > 0) {
+          p <- p + geom_signif(
+            data    = rows,
+            aes(xmin = xmin, xmax = xmax,
+                annotations = annotations, y_position = y_position),
+            manual      = TRUE,
+            textsize    = as.numeric(modifyList(DEFAULT_TEXT_SIZES,
+                                                as.list(text_sizes))$sig_bar),
+            fontface    = "bold",
+            family      = if (nzchar(font_family)) font_family else "",
+            vjust       = -0.4,
+            tip_length  = 0.02,
+            size        = 0.7,
+            color       = "black",
+            inherit.aes = FALSE
+          )
+        }
+      } else {
+        rows <- do.call(rbind, lapply(split(sig, sig$Gene), function(gsub) {
+          gene_data <- full_df[full_df$Gene == as.character(gsub$Gene[1]), ]
+          y_hi  <- max(gene_data$log2_fold_change, na.rm = TRUE)
+          y_lo  <- min(gene_data$log2_fold_change, na.rm = TRUE)
+          rng   <- max(y_hi - y_lo, 1)
+          step  <- 0.16 * rng
+          pairs <- strsplit(gsub$Comparison, " vs ", fixed = TRUE)
+          data.frame(
+            Gene         = gsub$Gene,
+            start        = sapply(pairs, `[`, 1),
+            end          = sapply(pairs, `[`, 2),
+            y_position   = y_hi + step * seq_len(nrow(gsub)),
+            annotations  = sig_fmt(gsub$p_value),
+            stringsAsFactors = FALSE
+          )
+        }))
+        p <- p + geom_signif(
+          data    = rows,
+          aes(xmin = start, xmax = end, annotations = annotations,
+              y_position = y_position),
+          manual           = TRUE,
+          textsize         = as.numeric(modifyList(DEFAULT_TEXT_SIZES,
+                                                   as.list(text_sizes))$sig_bar),
+          fontface         = "bold",
+          family           = if (nzchar(font_family)) font_family else "",
+          vjust            = -0.4,
+          tip_length       = 0.02,
+          size             = 0.7,
+          color            = "black",
+          inherit.aes      = FALSE
         )
-      }))
-      p <- p + geom_signif(
-        data    = rows,
-        aes(xmin = start, xmax = end, annotations = annotations,
-            y_position = y_position),
-        manual           = TRUE,
-        textsize         = as.numeric(modifyList(DEFAULT_TEXT_SIZES,
-                                                 as.list(text_sizes))$sig_bar),
-        fontface         = "bold",
-        family           = if (nzchar(font_family)) font_family else "",
-        vjust            = -0.4,
-        tip_length       = 0.02,
-        size             = 0.7,
-        color            = "black",
-        inherit.aes      = FALSE
-      )
+      }
     }
   }
 

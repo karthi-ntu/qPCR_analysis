@@ -5,6 +5,63 @@ compute_delta_ct <- function(df) {
   df
 }
 
+# --- Technical replicate averaging ----------------------------------------
+# Collapses rows that share the same (Sample, Group, [Subgroup], Gene) to a
+# single row by averaging Ct_target and Ct_reference independently. Returns
+# a data frame with one row per biological replicate per gene.
+# Also returns attr(out, "tech_counts") — vector of rep-counts per sample.
+average_tech_reps <- function(df) {
+  if (nrow(df) == 0) return(df)
+  has_sub <- "Subgroup" %in% names(df)
+  keys <- if (has_sub)
+    paste(df$Sample, df$Group, df$Subgroup, df$Gene, sep = "\u001f")
+  else
+    paste(df$Sample, df$Group, df$Gene, sep = "\u001f")
+  split_df <- split(df, keys)
+  rep_counts <- vapply(split_df, nrow, integer(1))
+  out <- do.call(rbind, lapply(split_df, function(rows) {
+    rows[1, "Ct_target"]    <- mean(rows$Ct_target,    na.rm = TRUE)
+    rows[1, "Ct_reference"] <- mean(rows$Ct_reference, na.rm = TRUE)
+    rows[1, , drop = FALSE]
+  }))
+  rownames(out) <- NULL
+  attr(out, "tech_counts") <- rep_counts
+  out
+}
+
+# Returns a string describing the replicate structure for methods text / UI.
+# e.g. "n = 3 biological replicates" or
+#      "n = 3 biological replicates (averaged from 3 technical replicates per well)"
+replicate_summary <- function(df, rep_mode = "biological") {
+  if (nrow(df) == 0) return("")
+  has_sub <- "Subgroup" %in% names(df)
+  keys <- if (has_sub)
+    paste(df$Sample, df$Group, df$Subgroup, sep = "\u001f")
+  else
+    paste(df$Sample, df$Group, sep = "\u001f")
+  n_bio <- length(unique(keys))
+  per_group_keys <- if (has_sub) paste(df$Group, df$Subgroup, sep = " | ")
+                    else df$Group
+  bio_per_group <- tapply(keys, per_group_keys,
+                          function(x) length(unique(x)))
+  bio_range <- range(bio_per_group, na.rm = TRUE)
+  bio_txt <- if (bio_range[1] == bio_range[2])
+    paste0("n = ", bio_range[1]) else paste0("n = ", bio_range[1], "-", bio_range[2])
+  if (rep_mode == "technical") {
+    tc <- attr(df, "tech_counts")
+    if (!is.null(tc) && length(tc) > 0) {
+      tc_range <- range(tc)
+      tc_txt <- if (tc_range[1] == tc_range[2])
+        paste0(tc_range[1], " technical replicates")
+      else
+        paste0(tc_range[1], "-", tc_range[2], " technical replicates")
+      return(paste0(bio_txt, " biological replicates (averaged from ",
+                    tc_txt, " per sample)"))
+    }
+  }
+  paste0(bio_txt, " biological replicates")
+}
+
 compute_fold_change <- function(df, control_group, control_subgroup = NULL) {
   if (!control_group %in% df$Group) {
     stop(sprintf("control_group '%s' not found in df$Group", control_group))
@@ -335,12 +392,9 @@ run_paired_stats <- function(df) {
 
 # --- Methods text generator ------------------------------------------------
 generate_methods_text <- function(df, stats_df, test_type,
-                                  paired, control_group, has_subgroup = FALSE) {
-  n_per_grp <- table(df$Sample[!duplicated(df[, c("Sample", "Group")])],
-                     df$Group[!duplicated(df[, c("Sample", "Group")])])
-  n_range <- range(colSums(n_per_grp > 0))
-  n_txt <- if (n_range[1] == n_range[2]) paste0("n = ", n_range[1])
-           else paste0("n = ", n_range[1], "-", n_range[2])
+                                  paired, control_group, has_subgroup = FALSE,
+                                  rep_mode = "biological") {
+  n_txt <- replicate_summary(df, rep_mode = rep_mode)
 
   genes <- unique(df$Gene)
   tests_used <- unique(stats_df$Test)
@@ -356,7 +410,7 @@ generate_methods_text <- function(df, stats_df, test_type,
            "relative to the ", baseline_phrase, "."),
     paste0("Data for ", length(genes), " gene(s) (",
            paste(genes, collapse = ", "),
-           ") were analyzed (", n_txt, " biological replicates per group)."),
+           ") were analyzed (", n_txt, " per group)."),
     paste0("Statistical testing: ", test_desc, "."),
     if (paired) "Paired design was applied where sample pairing was available." else NULL,
     if (has_subgroup) "A two-factor design (Group x Subgroup) was analyzed by two-way ANOVA." else NULL,

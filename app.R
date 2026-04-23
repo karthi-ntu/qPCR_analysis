@@ -82,6 +82,11 @@ shared_sidebar <- function() {
   tagList(
     textInput("ctrl_group", "Control group name", value = "Control"),
     uiOutput("ctrl_subgroup_ui"),
+    radioButtons("rep_mode", "Replicate type",
+                 choices = c("Biological replicates (one row per sample)" = "biological",
+                             "Technical replicates (average rows sharing Sample ID)" = "technical"),
+                 selected = "biological"),
+    uiOutput("layout_question_ui"),
     radioButtons("test_type", "Statistical test",
                  choices = c("Parametric (t-test / ANOVA)"              = "parametric",
                              "Non-parametric (Wilcoxon / Kruskal)"      = "nonparametric",
@@ -118,6 +123,27 @@ shared_sidebar <- function() {
       column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
     ),
     uiOutput("hide_comps_ui"),
+    # --- Export dimensions (for PNG/PDF/SVG/TIFF downloads) -----------------
+    tags$details(
+      tags$summary(strong("Export size (for downloads)")),
+      div(style = "padding:6px 2px;",
+          p(style = "font-size:11px; color:#666; margin-bottom:4px;",
+            "Exact dimensions for manuscript figures. Common widths: ",
+            strong("85 mm"), " (single column), ", strong("174 mm"),
+            " (double column), ", strong("89/183 mm"), " (Nature)."),
+          fluidRow(
+            column(6, numericInput("export_w_mm", "Width (mm)",
+                                   value = 174, min = 30, max = 400, step = 1)),
+            column(6, numericInput("export_h_mm", "Height (mm)",
+                                   value = 120, min = 30, max = 400, step = 1))
+          ),
+          radioButtons("export_dpi", "DPI (PNG/TIFF)",
+                       choices = c("300" = 300, "600" = 600, "1200" = 1200),
+                       selected = 300, inline = TRUE),
+          p(style = "font-size:11px; color:#666;",
+            em("SVG and PDF are vector \u2014 DPI ignored."))
+      )
+    ),
     # --- Plot styling panel (collapsible) -----------------------------------
     tags$details(
       tags$summary(strong("Plot styling (fonts, text size, colors)")),
@@ -254,6 +280,45 @@ help_content <- function() {
       tags$li(strong("Dunnett-style vs-control (Holm-Bonferroni)"), " \u2014 compares every non-control group to the control only (like Prism's default for dose-response). Uses pooled-variance t-test with Holm adjustment; statistically similar to a true Dunnett's test but built-in (no external package)."),
       tags$li(strong("Mann-Whitney vs control (Holm)"), " \u2014 non-parametric version of the above.")
     ),
+    h3("Replicate type (biological vs technical)"),
+    p("At the top of the sidebar, pick how each row in your paste should be interpreted:"),
+    tags$ul(
+      tags$li(strong("Biological replicates (default)"), " \u2014 each row is a distinct biological sample (animal, well, culture). ",
+              "The app uses all rows as independent observations for stats."),
+      tags$li(strong("Technical replicates"), " \u2014 rows sharing the same ",
+              code("Sample"), " + ", code("Group"), " (+ ", code("Subgroup"),
+              " if present) are treated as technical repeats of one biological sample. ",
+              "The app averages their ", code("Ct_target"), " and ", code("Ct_reference"),
+              " before computing \u0394Ct, giving one observation per biological sample (MIQE-compliant).")
+    ),
+    p(em("Tip:"), " most users pre-average tech reps in Excel before pasting, so ",
+      strong("Biological"), " is usually the right choice. Switch to ",
+      strong("Technical"), " only when your paste contains 2-3 rows per sample."),
+
+    h3("Two-factor layout (Prism-style prompt)"),
+    p("When a ", code("Subgroup"), " column is detected, a blue panel appears at the top of the sidebar asking you to pick the plot layout \u2014 exactly like Prism's new-graph wizard:"),
+    tags$ul(
+      tags$li(strong("Grouped (Prism style)"), " \u2014 one factor on the x-axis, the other as ",
+              em("dodged colored clusters"), " within each x position. ",
+              "You then pick which factor drives the x-axis (e.g. Young/Aged) and the other ",
+              "becomes the color legend (e.g. Carrier/Thapsigargin). This is the layout most biology papers use."),
+      tags$li(strong("Combined"), " \u2014 the original layout: one merged x-axis with labels like ",
+              code("Young | Carrier"), ", ", code("Young | Thaps"), ", ",
+              code("Aged | Carrier"), ", ", code("Aged | Thaps"), ". Useful when you want every interaction cell to stand alone.")
+    ),
+    p("Significance brackets adapt automatically: in Grouped mode they span the correct dodged positions (e.g. within-cluster comparisons or across-cluster comparisons with the right stagger)."),
+
+    h3("Manuscript-ready export"),
+    p("Expand the ", strong("Export size (for downloads)"), " panel in the sidebar to set exact figure dimensions in ", strong("millimeters"), " and choose ", strong("DPI"), " (for PNG/TIFF):"),
+    tags$ul(
+      tags$li(code("85 mm"), " \u2014 most journals' single column"),
+      tags$li(code("174 mm"), " \u2014 most journals' double column"),
+      tags$li(code("89 mm"), " / ", code("183 mm"), " \u2014 Nature family"),
+      tags$li(code("300 dpi"), " minimum for most journals; ", code("600 dpi"), " for Cell/Nature; ",
+              code("1200 dpi"), " for line art in some cases."),
+      tags$li(em("SVG / PDF are vector formats \u2014 DPI is ignored; size scales without loss."))
+    ),
+
     h3("Plot styling"),
     tags$ul(
       tags$li(strong("Font family"), " \u2014 pick Arial, Helvetica, Times New Roman, or generic sans/serif/mono."),
@@ -501,6 +566,34 @@ server <- function(input, output, session) {
     )
   })
 
+  # -- 2-factor plot layout question (Prism-wizard style) --------------------
+  # Only shown when a Subgroup column is detected. Mirrors Prism's behavior of
+  # asking the user explicitly which factor drives the x-axis and which is the
+  # grouping/dodge variable, instead of auto-collapsing them into one label.
+  output$layout_question_ui <- renderUI({
+    if (!has_subgroup()) return(NULL)
+    tagList(
+      tags$div(style = "padding:6px 8px; margin:4px 0; background:#f4f8ff; border-left:3px solid #4a7bd4; border-radius:3px;",
+        tags$b("Two-factor design detected."),
+        tags$p(style = "font-size:12px; margin:4px 0 0 0;",
+               "How should the plot look? (Prism-style question — change anytime)")
+      ),
+      radioButtons("two_factor_layout",
+                   "Plot layout",
+                   choices = c(
+                     "Grouped (Prism style): one factor on x-axis, the other as dodged colored clusters" = "grouped",
+                     "Combined: single x-axis with 'Group | Subgroup' combined labels" = "combined"),
+                   selected = "grouped"),
+      conditionalPanel(
+        "input.two_factor_layout == 'grouped'",
+        radioButtons("x_axis_var", "Which factor on the x-axis?",
+                     choices = c("Group (e.g. Young / Aged)"           = "Group",
+                                 "Subgroup (e.g. Carrier / Thapsigargin)" = "Subgroup"),
+                     selected = "Group")
+      )
+    )
+  })
+
   # -- Control subgroup selector (only appears when Subgroup column present) --
   output$ctrl_subgroup_ui <- renderUI({
     if (!has_subgroup()) return(NULL)
@@ -536,11 +629,24 @@ server <- function(input, output, session) {
   })
 
   # -- Analysis (Tab 1) ------------------------------------------------------
+  # The processed frame — applies technical-replicate averaging BEFORE delta-Ct
+  # when the user has picked "technical replicates" mode. This matches MIQE
+  # guidelines: tech reps collapse to one biological observation per sample.
+  processed_long <- reactive({
+    df <- long_data()
+    if (identical(input$rep_mode, "technical")) df <- average_tech_reps(df)
+    df
+  })
+
   analyzed <- reactive({
     req(is.null(validation_msg()))
-    df <- compute_delta_ct(long_data())
-    compute_fold_change(df, control_group = input$ctrl_group,
-                        control_subgroup = input$ctrl_subgroup)
+    df <- compute_delta_ct(processed_long())
+    out <- compute_fold_change(df, control_group = input$ctrl_group,
+                               control_subgroup = input$ctrl_subgroup)
+    # Preserve tech_counts attribute through delta/fold-change for methods text.
+    attr(out, "tech_counts") <- attr(processed_long(), "tech_counts")
+    attr(out, "rep_mode")    <- input$rep_mode
+    out
   })
 
   stats_result <- reactive({
@@ -634,6 +740,8 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
+                       two_factor_layout = input$two_factor_layout %||% "combined",
+                       x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   })
@@ -657,6 +765,8 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
+                       two_factor_layout = input$two_factor_layout %||% "combined",
+                       x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
@@ -680,7 +790,8 @@ server <- function(input, output, session) {
     generate_methods_text(
       df = analyzed(), stats_df = stats_result(),
       test_type = input$test_type, paired = input$paired,
-      control_group = baseline_label(), has_subgroup = has_subgroup()
+      control_group = baseline_label(), has_subgroup = has_subgroup(),
+      rep_mode = input$rep_mode %||% "biological"
     )
   })
 
@@ -702,6 +813,8 @@ server <- function(input, output, session) {
                    text_sizes    = text_sizes(),
                    font_family   = input$font_family %||% "",
                    sig_format    = input$sig_format %||% "exact",
+                   two_factor_layout = input$two_factor_layout %||% "combined",
+                   x_axis_var        = input$x_axis_var        %||% "Group",
                    y_min = if (is.na(input$y_min)) NULL else input$y_min,
                    y_max = if (is.na(input$y_max)) NULL else input$y_max))
   }
@@ -721,6 +834,8 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
+                       two_factor_layout = input$two_factor_layout %||% "combined",
+                       x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
@@ -743,15 +858,17 @@ server <- function(input, output, session) {
                        text_sizes          = text_sizes(),
                        font_family         = input$font_family %||% "",
                        sig_format          = input$sig_format %||% "exact",
+                       two_factor_layout   = input$two_factor_layout %||% "combined",
+                       x_axis_var          = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
 
+  # Download dimensions — manuscript-ready: use user-provided mm + DPI.
   download_dims <- function() {
-    n    <- length(genes_in_data())
-    ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-    nrow <- ceiling(n / ncol)
-    list(w = 4.5 * ncol, h = 4.5 * nrow)
+    list(w_mm = input$export_w_mm %||% 174,
+         h_mm = input$export_h_mm %||% 120,
+         dpi  = as.integer(input$export_dpi %||% 300))
   }
 
   output$dl_png <- downloadHandler(
@@ -760,8 +877,9 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(genes_in_data())
       d <- download_dims()
-      ggsave(file, download_plot(), width = d$w, height = d$h,
-             dpi = 300, device = "png", bg = "white")
+      ggsave(file, download_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
+             dpi = d$dpi, device = "png", bg = "white")
     }
   )
 
@@ -771,7 +889,8 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(genes_in_data())
       d <- download_dims()
-      ggsave(file, download_plot(), width = d$w, height = d$h,
+      ggsave(file, download_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
              device = "pdf", bg = "white")
     }
   )
@@ -782,7 +901,8 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(genes_in_data())
       d <- download_dims()
-      ggsave(file, download_plot(), width = d$w, height = d$h,
+      ggsave(file, download_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
              device = "svg", bg = "white")
     }
   )
@@ -793,8 +913,9 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(genes_in_data())
       d <- download_dims()
-      ggsave(file, download_plot(), width = d$w, height = d$h,
-             dpi = 300, device = "tiff", bg = "white",
+      ggsave(file, download_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
+             dpi = d$dpi, device = "tiff", bg = "white",
              compression = "lzw")
     }
   )
@@ -887,10 +1008,9 @@ server <- function(input, output, session) {
   })
 
   rm_download_dims <- function() {
-    n    <- length(unique(rm_analyzed()$Gene))
-    ncol <- max(1, as.integer(input$facet_ncol %||% 3))
-    nrow <- ceiling(n / ncol)
-    list(w = 5 * ncol, h = 5 * nrow)
+    list(w_mm = input$export_w_mm %||% 174,
+         h_mm = input$export_h_mm %||% 120,
+         dpi  = as.integer(input$export_dpi %||% 300))
   }
 
   output$rm_dl_png <- downloadHandler(
@@ -899,8 +1019,9 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(rm_valid()$ok)
       d <- rm_download_dims()
-      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
-             dpi = 300, device = "png", bg = "white")
+      ggsave(file, render_rm_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
+             dpi = d$dpi, device = "png", bg = "white")
     }
   )
 
@@ -910,7 +1031,8 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(rm_valid()$ok)
       d <- rm_download_dims()
-      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+      ggsave(file, render_rm_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
              device = "pdf", bg = "white")
     }
   )
@@ -921,7 +1043,8 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(rm_valid()$ok)
       d <- rm_download_dims()
-      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+      ggsave(file, render_rm_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
              device = "svg", bg = "white")
     }
   )
@@ -932,8 +1055,9 @@ server <- function(input, output, session) {
     content     = function(file) {
       req(rm_valid()$ok)
       d <- rm_download_dims()
-      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
-             dpi = 300, device = "tiff", bg = "white",
+      ggsave(file, render_rm_plot(),
+             width = d$w_mm, height = d$h_mm, units = "mm",
+             dpi = d$dpi, device = "tiff", bg = "white",
              compression = "lzw")
     }
   )
