@@ -734,7 +734,6 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
-                       two_factor_layout = input$two_factor_layout %||% "combined",
                        x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
@@ -759,7 +758,6 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
-                       two_factor_layout = input$two_factor_layout %||% "combined",
                        x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
@@ -807,7 +805,6 @@ server <- function(input, output, session) {
                    text_sizes    = text_sizes(),
                    font_family   = input$font_family %||% "",
                    sig_format    = input$sig_format %||% "exact",
-                   two_factor_layout = input$two_factor_layout %||% "combined",
                    x_axis_var        = input$x_axis_var        %||% "Group",
                    y_min = if (is.na(input$y_min)) NULL else input$y_min,
                    y_max = if (is.na(input$y_max)) NULL else input$y_max))
@@ -828,7 +825,6 @@ server <- function(input, output, session) {
                        text_sizes    = text_sizes(),
                        font_family   = input$font_family %||% "",
                        sig_format    = input$sig_format %||% "exact",
-                       two_factor_layout = input$two_factor_layout %||% "combined",
                        x_axis_var        = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
@@ -852,7 +848,6 @@ server <- function(input, output, session) {
                        text_sizes          = text_sizes(),
                        font_family         = input$font_family %||% "",
                        sig_format          = input$sig_format %||% "exact",
-                       two_factor_layout   = input$two_factor_layout %||% "combined",
                        x_axis_var          = input$x_axis_var        %||% "Group",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
