@@ -6,17 +6,58 @@ OKABE_ITO <- c(
   "#0072B2", "#D55E00", "#CC79A7", "#000000"
 )
 
+# Default text sizes used across all plots. Overridable via the 'text_sizes'
+# argument to prism_theme().
+DEFAULT_TEXT_SIZES <- list(
+  title      = 18,
+  axis_title = 14,
+  axis_text  = 12,
+  legend     = 12,
+  facet      = 14,
+  sig_bar    = 3.5
+)
+
 format_pvalue <- function(p) {
   ifelse(p < 0.0001, "p < 0.0001", sprintf("p = %.4f", p))
 }
 
-# Error-bar summary function factory
+# GraphPad-Prism-style significance stars:
+#   ns  p >= 0.05
+#   *    p < 0.05
+#   **   p < 0.01
+#   ***  p < 0.001
+#   **** p < 0.0001
+format_pvalue_stars <- function(p) {
+  out <- rep("ns", length(p))
+  out[!is.na(p) & p < 0.05]   <- "*"
+  out[!is.na(p) & p < 0.01]   <- "**"
+  out[!is.na(p) & p < 0.001]  <- "***"
+  out[!is.na(p) & p < 0.0001] <- "****"
+  out[is.na(p)] <- "NA"
+  out
+}
+
+# Pick the annotation formatter based on user preference.
+pick_sig_formatter <- function(sig_format = "exact") {
+  if (identical(sig_format, "stars")) format_pvalue_stars else format_pvalue
+}
+
+# Error-bar summary function factory. Supports SD, SEM, and CI95 (95 % CI
+# via the t-distribution — matches Prism's default).
 make_err_fun <- function(error_type) {
   if (error_type == "SEM") {
     function(x) {
       x <- x[!is.na(x)]
       m <- mean(x); s <- sd(x) / sqrt(length(x))
       data.frame(y = m, ymin = m - s, ymax = m + s)
+    }
+  } else if (error_type == "CI95") {
+    function(x) {
+      x <- x[!is.na(x)]
+      n <- length(x)
+      if (n < 2) return(data.frame(y = mean(x), ymin = mean(x), ymax = mean(x)))
+      m <- mean(x); se <- sd(x) / sqrt(n); t_crit <- qt(0.975, df = n - 1)
+      data.frame(y = m, ymin = m - t_crit * se, ymax = m + t_crit * se)
     }
   } else {
     function(x) {
@@ -27,22 +68,33 @@ make_err_fun <- function(error_type) {
   }
 }
 
-prism_theme <- function(rotate_x = FALSE) {
-  theme_classic(base_size = 14) +
+prism_theme <- function(rotate_x    = FALSE,
+                        text_sizes  = DEFAULT_TEXT_SIZES,
+                        font_family = "") {
+  ts <- modifyList(DEFAULT_TEXT_SIZES, as.list(text_sizes))
+  base_size <- as.numeric(ts$axis_text)
+  base <- theme_classic(base_size = base_size)
+  if (nzchar(font_family)) base <- base %+replace% theme(text = element_text(family = font_family))
+  base +
     theme(
       legend.position   = "none",
+      legend.text       = element_text(size = ts$legend, face = "bold"),
+      legend.title      = element_text(size = ts$legend, face = "bold"),
       axis.line         = element_line(linewidth = 1, color = "black"),
       axis.ticks        = element_line(linewidth = 0.8, color = "black"),
       axis.ticks.length = unit(0.2, "cm"),
-      axis.title        = element_text(face = "bold", color = "black"),
-      axis.text.y       = element_text(face = "bold", color = "black"),
+      axis.title        = element_text(face = "bold", color = "black",
+                                       size = ts$axis_title),
+      axis.text.y       = element_text(face = "bold", color = "black",
+                                       size = ts$axis_text),
       axis.text.x       = element_text(
         face  = "bold", color = "black",
+        size  = ts$axis_text,
         angle = if (rotate_x) 45 else 0,
         hjust = if (rotate_x) 1  else 0.5
       ),
-      plot.title        = element_text(face = "bold.italic", size = 18, hjust = 0.5),
-      strip.text        = element_text(face = "bold.italic", size = 14),
+      plot.title        = element_text(face = "bold.italic", size = ts$title, hjust = 0.5),
+      strip.text        = element_text(face = "bold.italic", size = ts$facet),
       strip.background  = element_blank()
     )
 }
@@ -56,7 +108,11 @@ make_barplot <- function(full_df, stats_df, gene,
                          control_group = "Control",
                          rotate_x      = FALSE,
                          aspect_ratio  = 1,
-                         has_subgroup  = FALSE) {
+                         has_subgroup  = FALSE,
+                         fill_override = NULL,
+                         text_sizes    = DEFAULT_TEXT_SIZES,
+                         font_family   = "",
+                         sig_format    = "exact") {
   sub <- full_df[full_df$Gene == gene, ]
   sub$Group <- factor(sub$Group, levels = unique(sub$Group))
   err_fun  <- make_err_fun(error_type)
@@ -97,15 +153,20 @@ make_barplot <- function(full_df, stats_df, gene,
                   size = 3, width = 0.12, alpha = 0.95)
   }
 
+  fill_levels <- if (use_sub) levels(sub$Subgroup) else levels(sub$Group)
+  fill_values <- resolve_fill(fill_override, fill_levels)
+
   p <- p +
-    scale_fill_manual(values = rep_len(OKABE_ITO, n_fills)) +
+    scale_fill_manual(values = fill_values) +
     labs(
       title = gene,
       y     = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
       x     = NULL,
       fill  = if (use_sub) "Subgroup" else NULL
     ) +
-    prism_theme(rotate_x = rotate_x) +
+    prism_theme(rotate_x    = rotate_x,
+                text_sizes  = text_sizes,
+                font_family = font_family) +
     theme(aspect.ratio = aspect_ratio)
 
   if (use_sub) {
@@ -125,13 +186,17 @@ make_barplot <- function(full_df, stats_df, gene,
     if (nrow(sig) > 0) {
       comparisons_list <- lapply(sig$Comparison, function(comp)
         trimws(strsplit(comp, " vs ", fixed = TRUE)[[1]]))
+      sig_fmt  <- pick_sig_formatter(sig_format)
+      sig_size <- as.numeric(modifyList(DEFAULT_TEXT_SIZES,
+                                        as.list(text_sizes))$sig_bar)
       p <- p + geom_signif(
         comparisons      = comparisons_list,
-        annotations      = format_pvalue(sig$p_value),
+        annotations      = sig_fmt(sig$p_value),
         map_signif_level = FALSE,
         step_increase    = 0.13,
-        textsize         = 3.5,
+        textsize         = sig_size,
         fontface         = "bold",
+        family           = if (nzchar(font_family)) font_family else "",
         vjust            = -0.6,
         tip_length       = 0.02,
         size             = 0.7,
@@ -141,6 +206,20 @@ make_barplot <- function(full_df, stats_df, gene,
   }
 
   p
+}
+
+# Helper: merge user's per-level color override with the default Okabe-Ito
+# palette. `override` is a named character vector (names are factor levels,
+# values are hex codes). Missing levels fall back to the palette.
+resolve_fill <- function(override, levels) {
+  default <- setNames(rep_len(OKABE_ITO, length(levels)), levels)
+  if (is.null(override) || length(override) == 0) return(default)
+  # Accept only hex codes like #RGB or #RRGGBB; drop invalid entries.
+  ok <- grepl("^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$", override)
+  override <- override[ok]
+  if (length(override) == 0) return(default)
+  default[names(override)] <- override
+  default
 }
 
 # Combined multi-gene figure using facet_wrap (g-tibo style)
@@ -154,7 +233,11 @@ make_combined_plot <- function(full_df, stats_df,
                                rotate_x      = FALSE,
                                aspect_ratio  = 1,
                                ncol          = 3,
-                               has_subgroup  = FALSE) {
+                               has_subgroup  = FALSE,
+                               fill_override = NULL,
+                               text_sizes    = DEFAULT_TEXT_SIZES,
+                               font_family   = "",
+                               sig_format    = "exact") {
   full_df$Gene  <- factor(full_df$Gene,  levels = unique(full_df$Gene))
   full_df$Group <- factor(full_df$Group, levels = unique(full_df$Group))
   err_fun  <- make_err_fun(error_type)
@@ -194,15 +277,20 @@ make_combined_plot <- function(full_df, stats_df,
                   size = 2.5, width = 0.12, alpha = 0.95)
   }
 
+  fill_levels <- if (use_sub) levels(full_df$Subgroup) else levels(full_df$Group)
+  fill_values <- resolve_fill(fill_override, fill_levels)
+
   p <- p +
-    scale_fill_manual(values = rep_len(OKABE_ITO, n_fills)) +
+    scale_fill_manual(values = fill_values) +
     facet_wrap(~ Gene, scales = "free_y", ncol = ncol) +
     labs(
       y    = bquote(Log[2] ~ "(FC to " * .(control_group) * ")"),
       x    = NULL,
       fill = if (use_sub) "Subgroup" else NULL
     ) +
-    prism_theme(rotate_x = rotate_x) +
+    prism_theme(rotate_x    = rotate_x,
+                text_sizes  = text_sizes,
+                font_family = font_family) +
     theme(aspect.ratio = aspect_ratio)
 
   if (use_sub) {
@@ -223,6 +311,7 @@ make_combined_plot <- function(full_df, stats_df,
       sig  <- sig[keep, ]
     }
     if (nrow(sig) > 0) {
+      sig_fmt <- pick_sig_formatter(sig_format)
       # Build per-gene bracket data with computed y positions
       rows <- do.call(rbind, lapply(split(sig, sig$Gene), function(gsub) {
         gene_data <- full_df[full_df$Gene == as.character(gsub$Gene[1]), ]
@@ -236,7 +325,7 @@ make_combined_plot <- function(full_df, stats_df,
           start        = sapply(pairs, `[`, 1),
           end          = sapply(pairs, `[`, 2),
           y_position   = y_hi + step * seq_len(nrow(gsub)),
-          annotations  = format_pvalue(gsub$p_value),
+          annotations  = sig_fmt(gsub$p_value),
           stringsAsFactors = FALSE
         )
       }))
@@ -245,8 +334,10 @@ make_combined_plot <- function(full_df, stats_df,
         aes(xmin = start, xmax = end, annotations = annotations,
             y_position = y_position),
         manual           = TRUE,
-        textsize         = 3.5,
+        textsize         = as.numeric(modifyList(DEFAULT_TEXT_SIZES,
+                                                 as.list(text_sizes))$sig_bar),
         fontface         = "bold",
+        family           = if (nzchar(font_family)) font_family else "",
         vjust            = -0.4,
         tip_length       = 0.02,
         size             = 0.7,
@@ -268,7 +359,10 @@ make_paired_plot <- function(full_df, stats_df,
                              control_group = "Control",
                              rotate_x      = FALSE,
                              aspect_ratio  = 1,
-                             ncol          = 3) {
+                             ncol          = 3,
+                             text_sizes    = DEFAULT_TEXT_SIZES,
+                             font_family   = "",
+                             sig_format    = "exact") {
   full_df$Gene   <- factor(full_df$Gene,   levels = unique(full_df$Gene))
   full_df$Group  <- factor(full_df$Group,  levels = unique(full_df$Group))
   full_df$Sample <- factor(full_df$Sample, levels = unique(full_df$Sample))
@@ -289,7 +383,9 @@ make_paired_plot <- function(full_df, stats_df,
       x     = NULL,
       color = "Sample"
     ) +
-    prism_theme(rotate_x = rotate_x) +
+    prism_theme(rotate_x    = rotate_x,
+                text_sizes  = text_sizes,
+                font_family = font_family) +
     theme(
       aspect.ratio    = aspect_ratio,
       legend.position = "right",
@@ -308,6 +404,7 @@ make_paired_plot <- function(full_df, stats_df,
       sig  <- sig[keep, ]
     }
     if (nrow(sig) > 0) {
+      sig_fmt <- pick_sig_formatter(sig_format)
       rows <- do.call(rbind, lapply(split(sig, sig$Gene), function(gsub) {
         gene_data <- full_df[full_df$Gene == as.character(gsub$Gene[1]), ]
         y_hi  <- max(gene_data$log2_fold_change, na.rm = TRUE)
@@ -320,7 +417,7 @@ make_paired_plot <- function(full_df, stats_df,
           start       = sapply(pairs, `[`, 1),
           end         = sapply(pairs, `[`, 2),
           y_position  = y_hi + step * seq_len(nrow(gsub)),
-          annotations = format_pvalue(gsub$p_value),
+          annotations = sig_fmt(gsub$p_value),
           stringsAsFactors = FALSE
         )
       }))
@@ -329,8 +426,10 @@ make_paired_plot <- function(full_df, stats_df,
         aes(xmin = start, xmax = end, annotations = annotations,
             y_position = y_position),
         manual      = TRUE,
-        textsize    = 3.5,
+        textsize    = as.numeric(modifyList(DEFAULT_TEXT_SIZES,
+                                            as.list(text_sizes))$sig_bar),
         fontface    = "bold",
+        family      = if (nzchar(font_family)) font_family else "",
         vjust       = -0.4,
         tip_length  = 0.02,
         size        = 0.7,

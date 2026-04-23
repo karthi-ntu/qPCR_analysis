@@ -83,8 +83,10 @@ shared_sidebar <- function() {
     textInput("ctrl_group", "Control group name", value = "Control"),
     uiOutput("ctrl_subgroup_ui"),
     radioButtons("test_type", "Statistical test",
-                 choices = c("Parametric (t-test / ANOVA)" = "parametric",
-                             "Non-parametric (Wilcoxon / Kruskal)" = "nonparametric"),
+                 choices = c("Parametric (t-test / ANOVA)"              = "parametric",
+                             "Non-parametric (Wilcoxon / Kruskal)"      = "nonparametric",
+                             "Dunnett-style: vs control only (Holm)"    = "parametric_vs_control",
+                             "Mann-Whitney vs control only (Holm)"      = "nonparametric_vs_control"),
                  selected = "parametric"),
     radioButtons("plot_type", "Plot type",
                  choices = c("Scatter + error bars" = "scatter",
@@ -100,7 +102,12 @@ shared_sidebar <- function() {
                    value = 3, min = 1, max = 6, step = 1)
     ),
     radioButtons("error_type", "Error bars",
-                 choices = c("SD", "SEM"), inline = TRUE),
+                 choices = c("SD" = "SD", "SEM" = "SEM", "95% CI" = "CI95"),
+                 inline = TRUE),
+    radioButtons("sig_format", "P-value display",
+                 choices = c("Exact (p = 0.0123)" = "exact",
+                             "Stars (*, **, ***, ****)" = "stars"),
+                 selected = "exact"),
     checkboxInput("paired", "Paired samples (2 groups only)", value = FALSE),
     checkboxInput("show_sig", "Show significance bars", value = TRUE),
     checkboxInput("rotate_x", "Rotate x-axis labels 45\u00b0", value = FALSE),
@@ -111,6 +118,31 @@ shared_sidebar <- function() {
       column(6, numericInput("y_max", "Y-axis max", value = NA, step = 0.5))
     ),
     uiOutput("hide_comps_ui"),
+    # --- Plot styling panel (collapsible) -----------------------------------
+    tags$details(
+      tags$summary(strong("Plot styling (fonts, text size, colors)")),
+      div(style = "padding:6px 2px;",
+          selectInput("font_family", "Font family",
+                      choices = c("Default (sans)" = "",
+                                  "Serif"          = "serif",
+                                  "Mono"           = "mono",
+                                  "Arial"          = "Arial",
+                                  "Helvetica"      = "Helvetica",
+                                  "Times New Roman"= "Times New Roman",
+                                  "Courier New"    = "Courier New"),
+                      selected = ""),
+          sliderInput("ts_title",      "Plot title size",     6, 28, 18, 1),
+          sliderInput("ts_axis_title", "Axis title size",     6, 24, 14, 1),
+          sliderInput("ts_axis_text",  "Axis tick text size", 6, 22, 12, 1),
+          sliderInput("ts_legend",     "Legend text size",    6, 20, 12, 1),
+          sliderInput("ts_facet",      "Facet (gene) title size", 6, 24, 14, 1),
+          sliderInput("ts_sig_bar",    "Sig-bar text size",   2, 10, 3.5, 0.5),
+          uiOutput("color_picker_ui"),
+          actionButton("reset_colors", "Reset colors to Okabe-Ito",
+                       icon = icon("rotate-left"),
+                       style = "width:100%; margin-top:6px;")
+      )
+    ),
     hr(),
     h5("Data"),
     p(style = "font-size:12px; color:#888;",
@@ -218,7 +250,18 @@ help_content <- function() {
       tags$li(strong("Wilcoxon signed-rank"), " \u2014 2 groups, paired non-parametric."),
       tags$li(strong("One-way ANOVA + Tukey HSD"), " \u2014 3+ groups, all pairwise comparisons."),
       tags$li(strong("Kruskal-Wallis + Dunn (Bonferroni)"), " \u2014 3+ groups, non-parametric."),
-      tags$li(strong("Two-way ANOVA"), " \u2014 when Subgroup column present; tests Group, Subgroup, and interaction.")
+      tags$li(strong("Two-way ANOVA"), " \u2014 when Subgroup column present; tests Group, Subgroup, and interaction."),
+      tags$li(strong("Dunnett-style vs-control (Holm-Bonferroni)"), " \u2014 compares every non-control group to the control only (like Prism's default for dose-response). Uses pooled-variance t-test with Holm adjustment; statistically similar to a true Dunnett's test but built-in (no external package)."),
+      tags$li(strong("Mann-Whitney vs control (Holm)"), " \u2014 non-parametric version of the above.")
+    ),
+    h3("Plot styling"),
+    tags$ul(
+      tags$li(strong("Font family"), " \u2014 pick Arial, Helvetica, Times New Roman, or generic sans/serif/mono."),
+      tags$li(strong("Text size sliders"), " \u2014 independent control over plot title, axis titles, tick labels, legend, facet (gene) titles, and significance-bar text."),
+      tags$li(strong("Per-group hex colors"), " \u2014 one ", code("#RRGGBB"), " textInput per detected Group (or Subgroup in two-factor designs). Invalid hex falls back to the default Okabe-Ito palette."),
+      tags$li(strong("P-value display"), " \u2014 switch between exact p-values (", code("p = 0.0042"), ") and stars (", code("ns / * / ** / *** / ****"), "); affects both the plot and the stats table."),
+      tags$li(strong("Error bars"), " \u2014 SD, SEM, or 95 % CI (t-distribution)."),
+      tags$li(strong("Export formats"), " \u2014 PNG (300 dpi), PDF (vector), SVG (vector), and TIFF (LZW-compressed, 300 dpi). Use SVG or PDF for journals that require vector figures.")
     ),
     h3("Tips"),
     tags$ul(
@@ -258,10 +301,12 @@ ui <- navbarPage(
         verbatimTextOutput("methods_text"),
         br(),
         fluidRow(
-          column(3, downloadButton("dl_png",     "Plot (PNG)")),
-          column(3, downloadButton("dl_pdf",     "Plot (PDF)")),
-          column(3, downloadButton("dl_csv",     "Stats (CSV)")),
-          column(3, downloadButton("dl_methods", "Methods (TXT)"))
+          column(2, downloadButton("dl_png",     "PNG")),
+          column(2, downloadButton("dl_pdf",     "PDF")),
+          column(2, downloadButton("dl_svg",     "SVG")),
+          column(2, downloadButton("dl_tiff",    "TIFF")),
+          column(2, downloadButton("dl_csv",     "Stats")),
+          column(2, downloadButton("dl_methods", "Methods"))
         )
       )
     )
@@ -289,9 +334,11 @@ ui <- navbarPage(
         DTOutput("rm_stats_table"),
         br(),
         fluidRow(
-          column(4, downloadButton("rm_dl_png", "Plot (PNG)")),
-          column(4, downloadButton("rm_dl_pdf", "Plot (PDF)")),
-          column(4, downloadButton("rm_dl_csv", "Stats (CSV)"))
+          column(2, downloadButton("rm_dl_png",  "PNG")),
+          column(2, downloadButton("rm_dl_pdf",  "PDF")),
+          column(2, downloadButton("rm_dl_svg",  "SVG")),
+          column(2, downloadButton("rm_dl_tiff", "TIFF")),
+          column(3, downloadButton("rm_dl_csv",  "Stats (CSV)"))
         )
       )
     )
@@ -380,6 +427,80 @@ server <- function(input, output, session) {
       rv$wide <- to_wide_df(parsed)
   })
 
+  # -- Per-group color pickers (dynamic based on detected groups) ------------
+  # OKABE_ITO is sourced from R/plot.R; duplicate the hex list here so we can
+  # populate the default hex values in the textInputs.
+  OKABE_ITO_UI <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+                    "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+  # The levels that the plot colors: Subgroup when has_subgroup, else Group.
+  fill_levels <- reactive({
+    df <- rv$wide
+    if (nrow(df) == 0) return(character(0))
+    if (has_subgroup() && "Subgroup" %in% names(df)) {
+      lv <- unique(df$Subgroup); lv[nzchar(lv)]
+    } else {
+      lv <- unique(df$Group);    lv[nzchar(lv)]
+    }
+  })
+
+  output$color_picker_ui <- renderUI({
+    lvs <- fill_levels()
+    if (length(lvs) == 0) return(p(em("(add data to set colors)"),
+                                   style = "font-size:11px; color:#888;"))
+    palette <- rep_len(OKABE_ITO_UI, length(lvs))
+    tagList(
+      tags$label("Group colors (hex)", style = "font-weight:bold;"),
+      lapply(seq_along(lvs), function(i) {
+        level <- lvs[i]
+        current <- isolate(input[[paste0("color_", make.names(level))]])
+        if (is.null(current) || !nzchar(current)) current <- palette[i]
+        fluidRow(
+          column(5, div(style = paste0(
+            "height:28px; margin-top:18px; border:1px solid #888; border-radius:3px; ",
+            "background:", current, ";"), ""),
+            tags$small(level, style = "display:block; font-size:10px; overflow:hidden;")),
+          column(7, textInput(paste0("color_", make.names(level)),
+                              label = NULL, value = current,
+                              placeholder = "#RRGGBB"))
+        )
+      })
+    )
+  })
+
+  # Reset all pickers to the Okabe-Ito defaults.
+  observeEvent(input$reset_colors, {
+    lvs <- fill_levels()
+    palette <- rep_len(OKABE_ITO_UI, length(lvs))
+    for (i in seq_along(lvs)) {
+      updateTextInput(session, paste0("color_", make.names(lvs[i])),
+                      value = palette[i])
+    }
+  })
+
+  # Build the named override vector passed to plot functions.
+  color_override <- reactive({
+    lvs <- fill_levels()
+    if (length(lvs) == 0) return(NULL)
+    vals <- vapply(lvs, function(lv) {
+      v <- input[[paste0("color_", make.names(lv))]]
+      if (is.null(v)) NA_character_ else v
+    }, character(1))
+    names(vals) <- lvs
+    vals[!is.na(vals)]
+  })
+
+  text_sizes <- reactive({
+    list(
+      title      = input$ts_title      %||% 18,
+      axis_title = input$ts_axis_title %||% 14,
+      axis_text  = input$ts_axis_text  %||% 12,
+      legend     = input$ts_legend     %||% 12,
+      facet      = input$ts_facet      %||% 14,
+      sig_bar    = input$ts_sig_bar    %||% 3.5
+    )
+  })
+
   # -- Control subgroup selector (only appears when Subgroup column present) --
   output$ctrl_subgroup_ui <- renderUI({
     if (!has_subgroup()) return(NULL)
@@ -425,8 +546,9 @@ server <- function(input, output, session) {
   stats_result <- reactive({
     req(analyzed())
     run_stats(analyzed(), paired = input$paired,
-              test_type = input$test_type,
-              has_subgroup = has_subgroup())
+              test_type     = input$test_type,
+              has_subgroup  = has_subgroup(),
+              control_group = input$ctrl_group)
   })
 
   genes_in_data <- reactive({ req(analyzed()); unique(analyzed()$Gene) })
@@ -508,6 +630,10 @@ server <- function(input, output, session) {
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
                        has_subgroup  = has_subgroup(),
+                       fill_override = color_override(),
+                       text_sizes    = text_sizes(),
+                       font_family   = input$font_family %||% "",
+                       sig_format    = input$sig_format %||% "exact",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   })
@@ -527,6 +653,10 @@ server <- function(input, output, session) {
                        rotate_x      = input$rotate_x,
                        aspect_ratio  = input$aspect_ratio,
                        has_subgroup  = has_subgroup(),
+                       fill_override = color_override(),
+                       text_sizes    = text_sizes(),
+                       font_family   = input$font_family %||% "",
+                       sig_format    = input$sig_format %||% "exact",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
         })
@@ -538,7 +668,8 @@ server <- function(input, output, session) {
   output$stats_table <- renderDT({
     req(stats_result())
     df <- stats_result()
-    df$p_value <- format_pvalue(df$p_value)
+    fmt <- pick_sig_formatter(input$sig_format %||% "exact")
+    df$p_value <- fmt(df$p_value)
     datatable(df, rownames = FALSE, options = list(dom = "t")) |>
       formatStyle("Significant", target = "row",
                   backgroundColor = styleEqual("Yes", "#d4edda"))
@@ -567,6 +698,10 @@ server <- function(input, output, session) {
                    rotate_x      = input$rotate_x,
                    aspect_ratio  = input$aspect_ratio,
                    has_subgroup  = has_subgroup(),
+                   fill_override = color_override(),
+                   text_sizes    = text_sizes(),
+                   font_family   = input$font_family %||% "",
+                   sig_format    = input$sig_format %||% "exact",
                    y_min = if (is.na(input$y_min)) NULL else input$y_min,
                    y_max = if (is.na(input$y_max)) NULL else input$y_max))
   }
@@ -582,6 +717,10 @@ server <- function(input, output, session) {
                        aspect_ratio  = input$aspect_ratio,
                        ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
                        has_subgroup  = has_subgroup(),
+                       fill_override = color_override(),
+                       text_sizes    = text_sizes(),
+                       font_family   = input$font_family %||% "",
+                       sig_format    = input$sig_format %||% "exact",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
@@ -600,6 +739,10 @@ server <- function(input, output, session) {
                        aspect_ratio        = input$aspect_ratio,
                        ncol = max(1, as.integer(input$facet_ncol %||% 3)),
                        has_subgroup        = has_subgroup(),
+                       fill_override       = color_override(),
+                       text_sizes          = text_sizes(),
+                       font_family         = input$font_family %||% "",
+                       sig_format          = input$sig_format %||% "exact",
                        y_min = if (is.na(input$y_min)) NULL else input$y_min,
                        y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
@@ -630,6 +773,29 @@ server <- function(input, output, session) {
       d <- download_dims()
       ggsave(file, download_plot(), width = d$w, height = d$h,
              device = "pdf", bg = "white")
+    }
+  )
+
+  output$dl_svg <- downloadHandler(
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".svg"),
+    contentType = "image/svg+xml",
+    content     = function(file) {
+      req(genes_in_data())
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
+             device = "svg", bg = "white")
+    }
+  )
+
+  output$dl_tiff <- downloadHandler(
+    filename    = function() paste0("qpcr_plot_", Sys.Date(), ".tiff"),
+    contentType = "image/tiff",
+    content     = function(file) {
+      req(genes_in_data())
+      d <- download_dims()
+      ggsave(file, download_plot(), width = d$w, height = d$h,
+             dpi = 300, device = "tiff", bg = "white",
+             compression = "lzw")
     }
   )
 
@@ -702,6 +868,9 @@ server <- function(input, output, session) {
                      rotate_x      = input$rotate_x,
                      aspect_ratio  = input$aspect_ratio,
                      ncol          = max(1, as.integer(input$facet_ncol %||% 3)),
+                     text_sizes    = text_sizes(),
+                     font_family   = input$font_family %||% "",
+                     sig_format    = input$sig_format %||% "exact",
                      y_min = if (is.na(input$y_min)) NULL else input$y_min,
                      y_max = if (is.na(input$y_max)) NULL else input$y_max)
   }
@@ -743,6 +912,29 @@ server <- function(input, output, session) {
       d <- rm_download_dims()
       ggsave(file, render_rm_plot(), width = d$w, height = d$h,
              device = "pdf", bg = "white")
+    }
+  )
+
+  output$rm_dl_svg <- downloadHandler(
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".svg"),
+    contentType = "image/svg+xml",
+    content     = function(file) {
+      req(rm_valid()$ok)
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+             device = "svg", bg = "white")
+    }
+  )
+
+  output$rm_dl_tiff <- downloadHandler(
+    filename    = function() paste0("qpcr_rm_plot_", Sys.Date(), ".tiff"),
+    contentType = "image/tiff",
+    content     = function(file) {
+      req(rm_valid()$ok)
+      d <- rm_download_dims()
+      ggsave(file, render_rm_plot(), width = d$w, height = d$h,
+             dpi = 300, device = "tiff", bg = "white",
+             compression = "lzw")
     }
   )
 

@@ -30,16 +30,19 @@ compute_fold_change <- function(df, control_group, control_subgroup = NULL) {
   do.call(rbind, result_list)
 }
 
-# --- Main stats (parametric / nonparametric) -------------------------------
+# --- Main stats (parametric / nonparametric / vs-control) ------------------
 run_stats <- function(df, paired = FALSE, test_type = "parametric",
-                      has_subgroup = FALSE) {
+                      has_subgroup = FALSE, control_group = NULL) {
   genes <- unique(df$Gene)
+
+  vs_control <- test_type %in% c("parametric_vs_control", "nonparametric_vs_control")
 
   results <- lapply(genes, function(gene) {
     sub <- df[df$Gene == gene, ]
 
-    # Two-way ANOVA branch
-    if (has_subgroup && "Subgroup" %in% names(sub) &&
+    # Two-way ANOVA branch (only when NOT in vs-control mode; the vs-control
+    # flow ignores Subgroup and runs direct comparisons against the control).
+    if (!vs_control && has_subgroup && "Subgroup" %in% names(sub) &&
         length(unique(sub$Subgroup)) >= 2) {
       return(run_two_way(sub, gene))
     }
@@ -48,7 +51,10 @@ run_stats <- function(df, paired = FALSE, test_type = "parametric",
     n_groups <- length(groups)
     if (n_groups < 2) return(NULL)
 
-    if (n_groups == 2) {
+    if (vs_control) {
+      if (is.null(control_group) || !control_group %in% groups) return(NULL)
+      run_vs_control(sub, gene, control_group, test_type)
+    } else if (n_groups == 2) {
       run_two_group(sub, gene, groups, paired, test_type)
     } else {
       run_multi_group(sub, gene, test_type)
@@ -56,6 +62,55 @@ run_stats <- function(df, paired = FALSE, test_type = "parametric",
   })
 
   do.call(rbind, Filter(Negate(is.null), results))
+}
+
+# Dunnett-style: each non-control group vs control, Holm-Bonferroni adjusted.
+# Uses pooled-SD pairwise t-test (closer to true Dunnett's method) in the
+# parametric branch, and Mann-Whitney U + Holm in the nonparametric branch.
+run_vs_control <- function(sub, gene, control_group, test_type) {
+  groups <- unique(sub$Group)
+  others <- setdiff(groups, control_group)
+  if (length(others) == 0) return(NULL)
+
+  if (test_type == "nonparametric_vs_control") {
+    raw <- vapply(others, function(g) {
+      tryCatch(
+        suppressWarnings(wilcox.test(
+          sub$delta_ct[sub$Group == g],
+          sub$delta_ct[sub$Group == control_group],
+          exact = FALSE)$p.value),
+        error = function(e) NA_real_)
+    }, numeric(1))
+    adj <- p.adjust(raw, method = "holm")
+    test_name <- "Mann-Whitney vs control (Holm)"
+  } else {
+    # Pooled-SD pairwise t-test is the standard Dunnett-approximating approach
+    # when multcomp is unavailable (which is the case in webR/Shinylive).
+    pw <- tryCatch(
+      suppressWarnings(
+        pairwise.t.test(sub$delta_ct, sub$Group,
+                        p.adjust.method = "holm", pool.sd = TRUE)$p.value),
+      error = function(e) NULL
+    )
+    if (is.null(pw)) return(NULL)
+    adj <- vapply(others, function(g) {
+      v1 <- if (g %in% rownames(pw) && control_group %in% colnames(pw))
+              pw[g, control_group] else NA_real_
+      v2 <- if (control_group %in% rownames(pw) && g %in% colnames(pw))
+              pw[control_group, g] else NA_real_
+      if (!is.na(v1)) v1 else v2
+    }, numeric(1))
+    test_name <- "Dunnett-style t-test vs control (Holm, pooled SD)"
+  }
+
+  data.frame(
+    Gene        = rep(gene, length(others)),
+    Comparison  = paste(others, "vs", control_group),
+    Test        = rep(test_name, length(others)),
+    p_value     = signif(adj, 4),
+    Significant = ifelse(!is.na(adj) & adj < 0.05, "Yes", "No"),
+    stringsAsFactors = FALSE
+  )
 }
 
 run_two_group <- function(sub, gene, groups, paired, test_type) {
@@ -305,6 +360,8 @@ generate_methods_text <- function(df, stats_df, test_type,
     paste0("Statistical testing: ", test_desc, "."),
     if (paired) "Paired design was applied where sample pairing was available." else NULL,
     if (has_subgroup) "A two-factor design (Group x Subgroup) was analyzed by two-way ANOVA." else NULL,
+    if (any(grepl("vs control", tests_used, ignore.case = TRUE)))
+      "Multiple comparisons against the control group were adjusted using the Holm-Bonferroni method (Dunnett-style pooled-variance t-test in the parametric branch)." else NULL,
     "Significance threshold: \u03b1 = 0.05. P-values < 0.0001 are displayed as 'p < 0.0001'."
   )
   paste(Filter(Negate(is.null), parts), collapse = " ")
