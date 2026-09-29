@@ -171,10 +171,10 @@ resolve_fill <- function(override, levels) {
 y_scale_spec <- function(y_scale, control_group) {
   if (identical(y_scale, "linear")) {
     list(var = "fold_change", ref = 1,
-         label = bquote("Fold change vs" ~ .(control_group)))
+         label = bquote("FC to" ~ .(control_group)))
   } else {
     list(var = "log2_fold_change", ref = 0,
-         label = bquote(log[2] ~ "fold change vs" ~ .(control_group)))
+         label = bquote(Log[2] * "FC to" ~ .(control_group)))
   }
 }
 

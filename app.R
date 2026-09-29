@@ -1025,31 +1025,51 @@ server <- function(input, output, session) {
   })
 
   # -- Plots --------------------------------------------------------------------
+  # Plot heights follow the container width and the aspect ratio, so a
+  # square panel is never clipped when the browser window is wide.
+  # (plotOutput(height = "auto") + renderPlot(height = fn) lets the server
+  # decide the height from session$clientData.)
+  plot_height_px <- function(output_id, n_panels, ncol, per_panel_extra = 130) {
+    w      <- session$clientData[[paste0("output_", output_id, "_width")]] %||% 900
+    ncol_e <- max(1, min(ncol, n_panels))
+    nrow   <- ceiling(n_panels / ncol_e)
+    panel_w <- max(150, (w - 110) / ncol_e - 20)
+    aspect  <- num_or(input$aspect_ratio, 1, 0.2, 5)
+    max(320, round(nrow * (panel_w * aspect + per_panel_extra)))
+  }
+
   output$plots_ui <- renderUI({
     req(genes_in_data())
     if (identical(input$plot_layout, "combined")) {
-      n      <- length(genes_in_data())
-      nrow   <- ceiling(n / facet_ncol())
-      plotOutput("plot_combined", height = paste0(max(350, 350 * nrow), "px"))
+      plotOutput("plot_combined", height = "auto")
     } else {
       do.call(tagList, lapply(genes_in_data(), function(gene)
-        plotOutput(paste0("plot_", make.names(gene)), height = "450px")))
+        plotOutput(paste0("plot_", make.names(gene)), height = "auto")))
     }
   })
 
-  output$plot_combined <- renderPlot({ req(genes_in_data()); combined_plot() })
+  output$plot_combined <- renderPlot(
+    { req(genes_in_data()); combined_plot() },
+    height = function() plot_height_px("plot_combined", length(genes_in_data()), facet_ncol())
+  )
 
   registered_gene_plots <- character(0)
   observe({
     req(genes_in_data())
     for (gene in setdiff(genes_in_data(), registered_gene_plots)) {
       local({
-        g <- gene
-        output[[paste0("plot_", make.names(g))]] <- renderPlot({
+        g  <- gene
+        id <- paste0("plot_", make.names(g))
+        output[[id]] <- renderPlot({
           req(g %in% genes_in_data())
           do.call(make_barplot,
                   c(list(analyzed(), stats_result(), gene = g,
                          sig_comparisons = visible_comps()), plot_args()))
+        }, height = function() {
+          # A single panel is drawn at most 600 px wide; keep it square-ish.
+          w <- session$clientData[[paste0("output_", id, "_width")]] %||% 700
+          aspect <- num_or(input$aspect_ratio, 1, 0.2, 5)
+          max(360, round(min(w - 110, 600) * aspect + 130))
         })
       })
       registered_gene_plots <<- c(registered_gene_plots, gene)
@@ -1162,9 +1182,7 @@ server <- function(input, output, session) {
 
   output$rm_plot_ui <- renderUI({
     req(rm_valid()$ok, rm_analyzed())
-    n    <- length(unique(rm_analyzed()$Gene))
-    nrow <- ceiling(n / facet_ncol())
-    plotOutput("rm_plot", height = paste0(max(400, 400 * nrow), "px"))
+    plotOutput("rm_plot", height = "auto")
   })
 
   rm_plot <- reactive({
@@ -1174,7 +1192,11 @@ server <- function(input, output, session) {
             c(list(rm_analyzed(), rm_stats(), ncol = facet_ncol(), sig_comparisons_all = NULL), a))
   })
 
-  output$rm_plot <- renderPlot({ rm_plot() })
+  output$rm_plot <- renderPlot(
+    { rm_plot() },
+    height = function() plot_height_px("rm_plot", length(unique(rm_analyzed()$Gene)),
+                                       facet_ncol(), per_panel_extra = 150)
+  )
 
   output$rm_stats_table <- renderDT({
     req(rm_stats())
