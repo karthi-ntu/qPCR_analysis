@@ -1,0 +1,15 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+.Renviron
+
+# Local editor / tool state
+.claude/settings.local.json
+.vscode/
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
