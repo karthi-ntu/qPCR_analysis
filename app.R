@@ -88,6 +88,8 @@ body, .form-control, .btn, .selectize-input, .dataTable { font-family: Arial, He
 .color-row input[type=color] { width: 44px; height: 28px; padding: 0; border: 1px solid #888; border-radius: 4px; background: none; }
 .color-row span { font-size: 12px; }
 .small-note { font-size: 11px; opacity: 0.75; }
+.shiny-plot-output img { display: block; margin: 0 auto; max-width: none; }
+.plot-card .card-body { overflow-x: auto; }
 "
 
 # Navbar data-status badge.
@@ -244,6 +246,11 @@ shared_sidebar <- function() {
       bslib::accordion_panel(
         value = "plot",
         title = tagList(icon("chart-column"), " 4. Plot"),
+        sidebar_tip(
+          sliderInput("plot_zoom", "Plot size on screen (%)",
+                      min = 25, max = 300, value = 100, step = 5),
+          "Zoom for viewing only. Downloads use the millimetre size set under Step 6."
+        ),
         radioButtons("plot_type", "Plot type",
                      choices = c("Scatter + error bars" = "scatter",
                                  "Column + dots" = "column"),
@@ -1029,13 +1036,23 @@ server <- function(input, output, session) {
   # square panel is never clipped when the browser window is wide.
   # (plotOutput(height = "auto") + renderPlot(height = fn) lets the server
   # decide the height from session$clientData.)
-  plot_height_px <- function(output_id, n_panels, ncol, per_panel_extra = 130) {
-    w      <- session$clientData[[paste0("output_", output_id, "_width")]] %||% 900
+  # The on-screen size comes from the "Plot size on screen" slider: each panel
+  # is drawn about 380 px wide at 100%, capped by the available width.
+  plot_dims_px <- function(output_id, n_panels, ncol, per_panel_extra = 130) {
+    # The reported width is 0 or missing while the output is hidden or has
+    # not been laid out yet (e.g. right after switching layout); fall back to
+    # a sensible width so the plot never renders at 0 px.
+    avail  <- session$clientData[[paste0("output_", output_id, "_width")]]
+    if (is.null(avail) || !is.finite(avail) || avail < 200) avail <- 900
+    zoom   <- num_or(input$plot_zoom, 100, 25, 300) / 100
     ncol_e <- max(1, min(ncol, n_panels))
     nrow   <- ceiling(n_panels / ncol_e)
-    panel_w <- max(150, (w - 110) / ncol_e - 20)
+    # Above 100% the plot may grow past the card (it scrolls sideways).
+    width  <- round(min(avail * max(1, zoom), ncol_e * 380 * zoom + 110))
+    panel_w <- max(120, (width - 110) / ncol_e - 20)
     aspect  <- num_or(input$aspect_ratio, 1, 0.2, 5)
-    max(320, round(nrow * (panel_w * aspect + per_panel_extra)))
+    list(w = width,
+         h = max(240, round(nrow * (panel_w * aspect + per_panel_extra))))
   }
 
   output$plots_ui <- renderUI({
@@ -1050,7 +1067,8 @@ server <- function(input, output, session) {
 
   output$plot_combined <- renderPlot(
     { req(genes_in_data()); combined_plot() },
-    height = function() plot_height_px("plot_combined", length(genes_in_data()), facet_ncol())
+    width  = function() plot_dims_px("plot_combined", length(genes_in_data()), facet_ncol())$w,
+    height = function() plot_dims_px("plot_combined", length(genes_in_data()), facet_ncol())$h
   )
 
   registered_gene_plots <- character(0)
@@ -1065,12 +1083,8 @@ server <- function(input, output, session) {
           do.call(make_barplot,
                   c(list(analyzed(), stats_result(), gene = g,
                          sig_comparisons = visible_comps()), plot_args()))
-        }, height = function() {
-          # A single panel is drawn at most 600 px wide; keep it square-ish.
-          w <- session$clientData[[paste0("output_", id, "_width")]] %||% 700
-          aspect <- num_or(input$aspect_ratio, 1, 0.2, 5)
-          max(360, round(min(w - 110, 600) * aspect + 130))
-        })
+        }, width  = function() plot_dims_px(id, 1, 1)$w,
+           height = function() plot_dims_px(id, 1, 1)$h)
       })
       registered_gene_plots <<- c(registered_gene_plots, gene)
     }
@@ -1194,8 +1208,8 @@ server <- function(input, output, session) {
 
   output$rm_plot <- renderPlot(
     { rm_plot() },
-    height = function() plot_height_px("rm_plot", length(unique(rm_analyzed()$Gene)),
-                                       facet_ncol(), per_panel_extra = 150)
+    width  = function() plot_dims_px("rm_plot", length(unique(rm_analyzed()$Gene)), facet_ncol(), 150)$w,
+    height = function() plot_dims_px("rm_plot", length(unique(rm_analyzed()$Gene)), facet_ncol(), 150)$h
   )
 
   output$rm_stats_table <- renderDT({
